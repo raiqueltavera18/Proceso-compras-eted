@@ -177,6 +177,7 @@
     async fetchAll() {
       var results = await Promise.all([
         sb.from("profiles").select("*").order("full_name"),
+        sb.from("pending_profiles").select("*").order("created_at"),
         sb.from("areas").select("*").order("name"),
         sb.from("cases").select("*").order("created_at"),
         sb.from("case_events").select("*").order("ts"),
@@ -185,15 +186,19 @@
       results.forEach(function (r) { if (r.error) throw r.error; });
       return {
         profiles: results[0].data || [],
-        areas: results[1].data || [],
-        cases: results[2].data || [],
-        events: results[3].data || [],
-        attachments: results[4].data || []
+        pendingProfiles: results[1].data || [],
+        areas: results[2].data || [],
+        cases: results[3].data || [],
+        events: results[4].data || [],
+        attachments: results[5].data || []
       };
     },
 
-    async createArea(name, manager) {
-      var r = await sb.from("areas").insert({ name: name, manager_name: manager || "" }).select().single();
+    async createArea(name, manager, secretaryName, secretaryContact) {
+      var r = await sb.from("areas").insert({
+        name: name, manager_name: manager || "",
+        secretary_name: secretaryName || "", secretary_contact: secretaryContact || ""
+      }).select().single();
       if (r.error) throw r.error;
       return r.data;
     },
@@ -208,6 +213,20 @@
 
     async updateProfile(id, fields) {
       var r = await sb.from("profiles").update(fields).eq("id", id);
+      if (r.error) throw r.error;
+    },
+
+    async createPendingProfile(fields) {
+      var r = await sb.from("pending_profiles").insert(fields).select().single();
+      if (r.error) throw r.error;
+      return r.data;
+    },
+    async updatePendingProfile(email, fields) {
+      var r = await sb.from("pending_profiles").update(fields).eq("email", email);
+      if (r.error) throw r.error;
+    },
+    async deletePendingProfile(email) {
+      var r = await sb.from("pending_profiles").delete().eq("email", email);
       if (r.error) throw r.error;
     },
 
@@ -262,6 +281,7 @@
     user: null,      // auth.users row (from session)
     me: null,         // profiles row for the current user
     profiles: [],
+    pendingProfiles: [], // invitaciones: correo + puesto ya asignado, todavía sin cuenta real
     areas: [],
     cases: [],
     events: [],       // todos los eventos de todos los procesos
@@ -412,6 +432,7 @@
     try {
       var data = await DB.fetchAll();
       state.profiles = data.profiles;
+      state.pendingProfiles = data.pendingProfiles;
       state.areas = data.areas;
       state.cases = data.cases;
       state.events = data.events;
@@ -430,6 +451,7 @@
     try {
       var data = await DB.fetchAll();
       state.profiles = data.profiles;
+      state.pendingProfiles = data.pendingProfiles;
       state.areas = data.areas;
       state.cases = data.cases;
       state.events = data.events;
@@ -1253,16 +1275,30 @@
       '<div class="form-grid" style="align-items:start;">' +
       '<div class="card"><div class="card-title">Áreas requirentes</div><div class="card-pad">' +
       '<div class="area-list" id="areas-list"></div>' +
-      (isAdmin() ? '<div class="action-row" style="margin-top:10px;"><div class="field"><label>Nueva área</label><input type="text" id="areas-add-name" placeholder="Nombre del área"></div><div class="field"><label>Gerente/director responsable</label><input type="text" id="areas-add-manager" placeholder="Nombre"></div></div><button type="button" class="btn secondary small" id="areas-add-btn" style="margin-top:8px;">+ agregar área</button>' : "") +
+      (isAdmin() ? '<div class="action-row" style="margin-top:10px;"><div class="field"><label>Nueva área</label><input type="text" id="areas-add-name" placeholder="Nombre del área"></div><div class="field"><label>Gerente/director responsable</label><input type="text" id="areas-add-manager" placeholder="Nombre"></div></div>' +
+        '<div class="action-row"><div class="field"><label>Secretaria administrativa del área (opcional)</label><input type="text" id="areas-add-secretary-name" placeholder="Nombre"></div><div class="field"><label>Correo o teléfono de la secretaria</label><input type="text" id="areas-add-secretary-contact" placeholder="correo@eted.gob.do"></div></div>' +
+        '<button type="button" class="btn secondary small" id="areas-add-btn" style="margin-top:8px;">+ agregar área</button>' : "") +
       "</div></div>" +
       '<div class="card"><div class="card-title">Directorio de usuarios</div><div class="card-pad">' +
-      (isAdmin() ? '<p class="hint" style="margin-bottom:10px;">Para agregar una persona nueva, pídele que cree su cuenta en la pantalla de inicio de sesión ("Crear cuenta"). En cuanto lo haga, aparecerá aquí — sin puesto — para que se lo asignes.</p>' : "") +
+      (isAdmin() ? '<p class="hint" style="margin-bottom:10px;">Estas son las cuentas ya creadas. Para agregar a alguien nuevo, usa "Invitar persona" abajo — así entra con su puesto y permisos ya asignados por ti.</p>' : "") +
       '<div class="user-list" id="users-list"></div>' +
       "</div></div>" +
-      "</div>";
+      "</div>" +
+      (isAdmin() ? '<div class="card" style="margin-top:16px;"><div class="card-title">Invitar persona</div><div class="card-pad">' +
+        '<p class="hint" style="margin-bottom:10px;">Escribe el correo de la persona y asígnale de una vez su puesto, área y permisos. Avísale (por correo, WhatsApp, etc.) que entre a Procomly y cree su cuenta con ese mismo correo — en cuanto lo haga, quedará automáticamente con lo que le asignaste aquí, sin que tengas que hacer nada más.</p>' +
+        '<div id="invite-form-wrap"></div>' +
+        '<p class="hint" style="margin:16px 0 8px;">Personas invitadas — todavía no han creado su cuenta</p>' +
+        '<div class="user-list" id="pending-invites-list"></div>' +
+        "</div></div>" : "");
     renderAreasChips();
     renderUsersList();
-    if (isAdmin()) $("#areas-add-btn").addEventListener("click", onAddArea);
+    if (isAdmin()) {
+      $("#areas-add-btn").addEventListener("click", onAddArea);
+      var inviteWrap = $("#invite-form-wrap");
+      inviteWrap.innerHTML = pendingInviteFormHTML(null);
+      wirePendingInviteForm(inviteWrap, null);
+      renderPendingInvitesList();
+    }
   }
 
   function renderAreasChips() {
@@ -1272,19 +1308,28 @@
     box.innerHTML = state.areas.map(function (a) {
       return '<span class="area-chip-wrap" data-area-id="' + esc(a.id) + '"><span class="area-chip">' + esc(a.name) + "</span>" +
         (a.manager_name ? '<span class="area-chip-manager">— Resp.: ' + esc(a.manager_name) + "</span>" : "") +
-        (isAdmin() ? '<button type="button" class="icon-btn area-rename-btn" title="Renombrar">✎</button><button type="button" class="icon-btn area-manager-btn" title="Responsable">🧑</button><button type="button" class="icon-btn danger area-remove-btn" title="Quitar">×</button>' : "") +
+        (a.secretary_name ? '<span class="area-chip-manager">— Secretaria: ' + esc(a.secretary_name) + (a.secretary_contact ? " (" + esc(a.secretary_contact) + ")" : "") + "</span>" : "") +
+        (isAdmin() ? '<button type="button" class="icon-btn area-rename-btn" title="Renombrar">✎</button><button type="button" class="icon-btn area-manager-btn" title="Responsable">🧑</button><button type="button" class="icon-btn area-secretary-btn" title="Secretaria administrativa">📇</button><button type="button" class="icon-btn danger area-remove-btn" title="Quitar">×</button>' : "") +
         "</span>";
     }).join("");
     if (!isAdmin()) return;
     $$(".area-rename-btn", box).forEach(function (b) { b.addEventListener("click", function () { onRenameArea(b.closest(".area-chip-wrap").getAttribute("data-area-id")); }); });
     $$(".area-manager-btn", box).forEach(function (b) { b.addEventListener("click", function () { onSetAreaManager(b.closest(".area-chip-wrap").getAttribute("data-area-id")); }); });
+    $$(".area-secretary-btn", box).forEach(function (b) { b.addEventListener("click", function () { onSetAreaSecretary(b.closest(".area-chip-wrap").getAttribute("data-area-id")); }); });
     $$(".area-remove-btn", box).forEach(function (b) { b.addEventListener("click", function () { onRemoveArea(b.closest(".area-chip-wrap").getAttribute("data-area-id")); }); });
   }
   async function onAddArea() {
     var name = $("#areas-add-name").value.trim();
     if (!name) return;
     var manager = $("#areas-add-manager").value.trim();
-    try { await DB.createArea(name, manager); $("#areas-add-name").value = ""; $("#areas-add-manager").value = ""; showToast("Área agregada", name); await refreshData(true); }
+    var secName = $("#areas-add-secretary-name").value.trim();
+    var secContact = $("#areas-add-secretary-contact").value.trim();
+    try {
+      await DB.createArea(name, manager, secName, secContact);
+      $("#areas-add-name").value = ""; $("#areas-add-manager").value = "";
+      $("#areas-add-secretary-name").value = ""; $("#areas-add-secretary-contact").value = "";
+      showToast("Área agregada", name); await refreshData(true);
+    }
     catch (err) { showToast("No se pudo agregar", String(err.message || err), true); }
   }
   async function onRenameArea(id) {
@@ -1298,6 +1343,14 @@
     var nv = await showPrompt('Gerente o director responsable de "' + a.name + '":', a.manager_name || "");
     if (nv === null) return;
     try { await DB.updateArea(id, { manager_name: nv.trim() }); await refreshData(true); } catch (err) { showToast("No se pudo actualizar", String(err.message || err), true); }
+  }
+  async function onSetAreaSecretary(id) {
+    var a = areaById(id); if (!a) return;
+    var name = await showPrompt('Secretaria administrativa de "' + a.name + '" (nombre):', a.secretary_name || "");
+    if (name === null) return;
+    var contact = await showPrompt('Correo o teléfono de la secretaria de "' + a.name + '":', a.secretary_contact || "");
+    if (contact === null) return;
+    try { await DB.updateArea(id, { secretary_name: name.trim(), secretary_contact: contact.trim() }); await refreshData(true); } catch (err) { showToast("No se pudo actualizar", String(err.message || err), true); }
   }
   async function onRemoveArea(id) {
     var a = areaById(id); if (!a) return;
@@ -1425,6 +1478,117 @@
         await refreshData(true);
         renderRoute();
       } catch (err) { showToast("No se pudo guardar", String(err.message || err), true); }
+    });
+  }
+
+  // ============================================ invitaciones (pending_profiles)
+  function pendingInviteFormHTML(existing) {
+    var isEdit = !!existing;
+    var roles = existing ? existing.roles : [];
+    var roleChecks = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"].map(function (r) {
+      return '<label><input type="checkbox" class="ni-role-check" value="' + r + '"' + (roles.indexOf(r) !== -1 ? " checked" : "") + "> " + esc(ROLE_LABELS[r]) + "</label>";
+    }).join("");
+    var areaOpts = state.areas.map(function (a) { return optHtml(a.id, a.name).replace('value="' + a.id + '"', 'value="' + a.id + '"' + (existing && a.id === existing.area_id ? " selected" : "")); }).join("");
+    var coordMenor = existing && existing.coord_tipos && existing.coord_tipos.indexOf("menor") !== -1;
+    var coordLic = existing && existing.coord_tipos && existing.coord_tipos.indexOf("licitacion") !== -1;
+    return '<form class="pending-invite-form stack">' +
+      '<div class="form-grid">' +
+      '<div class="field"><label>Correo</label><input type="email" class="ni-email" required placeholder="nombre@eted.gob.do" value="' + esc(existing ? existing.email : "") + '"' + (isEdit ? " disabled" : "") + '></div>' +
+      '<div class="field"><label>Nombre completo (opcional)</label><input type="text" class="ni-name" value="' + esc(existing ? existing.full_name : "") + '"></div>' +
+      "</div>" +
+      '<div class="field"><label>Puesto(s)</label><div class="roles-check ni-roles-check">' + roleChecks + "</div></div>" +
+      '<div class="field ni-area-field"' + (roles.indexOf("area") === -1 ? " hidden" : "") + '><label>Área requirente</label><select class="ni-area">' + areaOpts + "</select></div>" +
+      '<div class="field ni-coord-field"' + (roles.indexOf("coordinador") === -1 ? " hidden" : "") + '><label>Especialidad del coordinador (opcional)</label><div class="roles-check">' +
+      '<label><input type="checkbox" class="ni-coord-menor"' + (coordMenor ? " checked" : "") + "> Compras menores</label>" +
+      '<label><input type="checkbox" class="ni-coord-lic"' + (coordLic ? " checked" : "") + "> Licitación y contrataciones</label></div></div>" +
+      '<div class="check-row"><label><input type="checkbox" class="ni-is-admin"' + (existing && existing.is_admin ? " checked" : "") + "> Será administrador de Procomly</label></div>" +
+      '<div class="form-actions"><button type="submit" class="btn small">' + (isEdit ? "Guardar cambios" : "Invitar") + "</button>" +
+      (isEdit ? ' <button type="button" class="btn ghost small ni-cancel">Cancelar</button>' : "") +
+      "</div></form>";
+  }
+  function wirePendingInviteForm(wrap, existing) {
+    var form = $(".pending-invite-form", wrap);
+    if (existing) $(".ni-cancel", form).addEventListener("click", function () { wrap.hidden = true; wrap.innerHTML = ""; });
+    $(".ni-roles-check", form).addEventListener("change", function () {
+      var areaChecked = form.querySelector('.ni-role-check[value="area"]').checked;
+      $(".ni-area-field", form).hidden = !areaChecked;
+      var coordChecked = form.querySelector('.ni-role-check[value="coordinador"]').checked;
+      $(".ni-coord-field", form).hidden = !coordChecked;
+    });
+    form.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      var email = $(".ni-email", form).value.trim().toLowerCase();
+      if (!email) return;
+      var roles = $$(".ni-role-check", form).filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
+      var areaChecked = roles.indexOf("area") !== -1;
+      var areaId = areaChecked ? $(".ni-area", form).value : null;
+      if (areaChecked && !areaId) { await showAlert("Selecciona un área requirente para esta persona."); return; }
+      var coordTipos = roles.indexOf("coordinador") !== -1 ? [$(".ni-coord-menor", form).checked ? "menor" : null, $(".ni-coord-lic", form).checked ? "licitacion" : null].filter(Boolean) : [];
+      var isAdminFlag = $(".ni-is-admin", form).checked;
+      var fields = {
+        full_name: $(".ni-name", form).value.trim(),
+        roles: roles, area_id: areaId, coord_tipos: coordTipos, is_admin: isAdminFlag
+      };
+      try {
+        if (existing) {
+          await DB.updatePendingProfile(existing.email, fields);
+          showToast("Invitación actualizada", email);
+        } else {
+          if (state.profiles.some(function (p) { return (p.email || "").toLowerCase() === email; })) {
+            await showAlert("Ya existe una cuenta con ese correo — asígnale el puesto directamente en el Directorio de usuarios.");
+            return;
+          }
+          if (state.pendingProfiles.some(function (p) { return p.email.toLowerCase() === email; })) {
+            await showAlert("Ya hay una invitación pendiente para ese correo.");
+            return;
+          }
+          fields.email = email;
+          await DB.createPendingProfile(fields);
+          showToast("Invitación creada", email + " — avísale que cree su cuenta con este correo.");
+          form.reset();
+          $(".ni-area-field", form).hidden = true;
+          $(".ni-coord-field", form).hidden = true;
+        }
+        await refreshData(true);
+        renderRoute();
+      } catch (err) { showToast("No se pudo guardar", String(err.message || err), true); }
+    });
+  }
+  function renderPendingInvitesList() {
+    var box = $("#pending-invites-list");
+    if (!box) return;
+    if (!state.pendingProfiles.length) { box.innerHTML = '<p class="hint">No hay invitaciones pendientes.</p>'; return; }
+    box.innerHTML = state.pendingProfiles.map(function (p) {
+      return '<div class="user-row-wrap" data-invite-email="' + esc(p.email) + '">' +
+        '<div class="user-row"><div class="user-row-main"><span class="avatar">' + esc(initials(p.full_name || p.email)) + '</span>' +
+        '<div class="user-row-text"><span class="u-name">' + esc(p.full_name || p.email) + '</span>' +
+        '<span class="u-meta">' + esc(p.email) + " · " + esc(userMetaText(p) || "sin puesto") + "</span></div></div>" +
+        '<div class="action-buttons">' +
+        '<button type="button" class="btn ghost small invite-edit-btn">Editar</button>' +
+        '<button type="button" class="btn ghost small danger invite-cancel-btn">Cancelar invitación</button>' +
+        "</div></div>" +
+        '<div class="edit-invite-wrap" hidden></div>' +
+        "</div>";
+    }).join("");
+    $$(".invite-edit-btn", box).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var wrap = btn.closest(".user-row-wrap");
+        var email = wrap.getAttribute("data-invite-email");
+        var p = state.pendingProfiles.filter(function (x) { return x.email === email; })[0];
+        if (!p) return;
+        var editWrap = $(".edit-invite-wrap", wrap);
+        editWrap.hidden = !editWrap.hidden;
+        if (!editWrap.hidden) { editWrap.innerHTML = pendingInviteFormHTML(p); wirePendingInviteForm(editWrap, p); }
+      });
+    });
+    $$(".invite-cancel-btn", box).forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        var wrap = btn.closest(".user-row-wrap");
+        var email = wrap.getAttribute("data-invite-email");
+        if (!(await showConfirm('¿Cancelar la invitación de "' + esc(email) + '"? Todavía podrás invitarla de nuevo más adelante.'))) return;
+        try { await DB.deletePendingProfile(email); showToast("Invitación cancelada", email); await refreshData(true); renderRoute(); }
+        catch (err) { showToast("No se pudo cancelar", String(err.message || err), true); }
+      });
     });
   }
 })();

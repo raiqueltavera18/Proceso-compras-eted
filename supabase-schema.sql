@@ -19,16 +19,20 @@ create extension if not exists "pgcrypto";
 -- Áreas requirentes (las gerencias/direcciones que piden compras). Va primero
 -- porque "profiles" y "cases" la referencian.
 create table public.areas (
-  id            uuid primary key default gen_random_uuid(),
-  name          text not null unique,
-  manager_name  text not null default '',  -- gerente o director responsable
-  created_at    timestamptz not null default now()
+  id                 uuid primary key default gen_random_uuid(),
+  name               text not null unique,
+  manager_name       text not null default '',  -- gerente o director responsable
+  secretary_name     text not null default '',  -- secretaria administrativa de esa área requirente
+  secretary_contact  text not null default '',  -- correo o teléfono de esa secretaria
+  created_at         timestamptz not null default now()
 );
 
--- Perfil de cada persona. Un perfil se crea automáticamente (ver el trigger
--- más abajo) cuando alguien se registra con su correo — pero queda "vacío"
--- (sin puestos, sin área) hasta que un administrador lo completa desde la
--- pestaña "Áreas y usuarios" de la aplicación.
+-- Perfil de cada persona. Se crea automáticamente (ver el trigger más abajo)
+-- en el momento en que alguien se registra con su correo. Si el
+-- administrador ya había "pre-registrado" ese correo en pending_profiles
+-- (tabla de abajo) con su puesto, área, etc., el trigger copia esos datos
+-- de una vez; si no, queda vacío hasta que el administrador lo complete
+-- desde la pestaña "Áreas y usuarios".
 create table public.profiles (
   id              uuid primary key references auth.users (id) on delete cascade,
   email           text not null,
@@ -43,7 +47,29 @@ create table public.profiles (
   active          boolean not null default true,  -- desactivar en vez de borrar la cuenta
   created_at      timestamptz not null default now()
 );
-comment on table public.profiles is 'Un registro por persona. Se crea vacío al registrarse; el administrador completa puesto(s), área, etc.';
+comment on table public.profiles is 'Un registro por persona. Se crea al registrarse; ya viene con su puesto si el administrador lo pre-registró en pending_profiles.';
+
+-- "Invitaciones": el administrador registra aquí a alguien por su correo,
+-- con su puesto, área y permisos YA asignados, ANTES de que esa persona
+-- haya creado su cuenta. No está ligada todavía a ningún usuario real de
+-- auth.users (por eso es una tabla aparte de "profiles", que sí exige un
+-- usuario real). En cuanto esa persona entra a Procomly y crea su cuenta
+-- con ESE MISMO correo, el trigger de más abajo copia estos datos a su
+-- perfil real y borra esta fila — todo automático, sin que el
+-- administrador tenga que volver a tocar nada.
+create table public.pending_profiles (
+  email           text primary key,
+  full_name       text not null default '',
+  employee_id     text not null default '',
+  position_title  text not null default '',
+  department      text not null default '',
+  area_id         uuid references public.areas (id) on delete set null,
+  roles           text[] not null default '{}',
+  coord_tipos     text[] not null default '{}',
+  is_admin        boolean not null default false,
+  created_at      timestamptz not null default now()
+);
+comment on table public.pending_profiles is 'Personas invitadas por el administrador (correo + puesto ya asignado) que todavía no han creado su cuenta.';
 
 -- Procesos de compra / licitación.
 create table public.cases (
@@ -147,6 +173,35 @@ as $$
   select area_id from public.profiles where id = auth.uid();
 $$;
 
+-- ¿Puede la persona actual ver este proceso? Secretaría, Gerencia y
+-- Jurídico ven todos los procesos (necesitan visión completa del flujo).
+-- Coordinador y Analista solo ven los procesos que tienen asignados a
+-- ellos mismos (aunque el proceso ya haya avanzado a otra etapa). Área
+-- requirente solo ve los procesos de su propia área. El administrador
+-- siempre ve todo. Se usa para las políticas de "select" de cases,
+-- case_events y attachments, así las tres tablas quedan consistentes.
+create or replace function public.can_view_case(target_case_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.cases c
+    where c.id = target_case_id
+      and (
+        public.is_admin()
+        or public.has_role('secretaria')
+        or public.has_role('gerente')
+        or public.has_role('juridico')
+        or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+        or (public.has_role('analista') and c.analista_id = auth.uid())
+        or (public.has_role('area') and c.area_id = public.my_area_id())
+      )
+  );
+$$;
+
 -- ============================================================================
 -- 3. TRIGGER: crear automáticamente un perfil vacío al registrarse
 -- ============================================================================
@@ -157,9 +212,25 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  invite public.pending_profiles;
 begin
-  insert into public.profiles (id, email)
-  values (new.id, new.email);
+  select * into invite
+  from public.pending_profiles
+  where lower(email) = lower(new.email)
+  limit 1;
+
+  if found then
+    insert into public.profiles
+      (id, email, full_name, employee_id, position_title, department, area_id, roles, coord_tipos, is_admin)
+    values
+      (new.id, new.email, invite.full_name, invite.employee_id, invite.position_title, invite.department,
+       invite.area_id, invite.roles, invite.coord_tipos, invite.is_admin);
+    delete from public.pending_profiles where lower(email) = lower(new.email);
+  else
+    insert into public.profiles (id, email) values (new.id, new.email);
+  end if;
+
   return new;
 end;
 $$;
@@ -215,10 +286,26 @@ create trigger case_transition_guard
   for each row execute procedure public.enforce_case_transition();
 
 -- ============================================================================
+-- 3c. PERMISOS DE TABLA (GRANTS)
+-- ============================================================================
+-- Row Level Security decide QUÉ FILAS puede ver/editar cada quien, pero
+-- antes de eso Postgres exige un permiso base sobre la tabla en sí — sin
+-- esto, cualquier consulta falla con "permission denied for table ..." sin
+-- importar qué tan bien estén escritas las políticas de abajo. anon es el
+-- rol de alguien sin sesión iniciada (de todas formas no verá filas, porque
+-- ninguna política de abajo le aplica a "anon"); authenticated es cualquier
+-- persona con sesión iniciada.
+
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on all tables in schema public to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;
+
+-- ============================================================================
 -- 4. ROW LEVEL SECURITY
 -- ============================================================================
 
 alter table public.profiles          enable row level security;
+alter table public.pending_profiles  enable row level security;
 alter table public.areas             enable row level security;
 alter table public.cases             enable row level security;
 alter table public.case_events       enable row level security;
@@ -243,6 +330,18 @@ create policy "profiles_update_admin_only"
   using (public.is_admin())
   with check (public.is_admin());
 
+-- ---------- pending_profiles ----------
+-- Contiene puestos y permisos ya asignados a correos que todavía no han
+-- iniciado sesión — solo el administrador puede verlas o tocarlas. Nadie
+-- más necesita leer esta tabla (ni siquiera la propia persona invitada:
+-- antes de crear su cuenta no tiene sesión, y después de crearla el
+-- trigger ya copió sus datos a "profiles" y borró la fila de aquí).
+create policy "pending_profiles_admin_only"
+  on public.pending_profiles for all
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
 -- Nadie inserta perfiles directamente: se crean solos vía el trigger de
 -- arriba cuando alguien se registra. No hace falta política de INSERT.
 
@@ -259,13 +358,13 @@ create policy "areas_write_admin_only"
   with check (public.is_admin());
 
 -- ---------- cases ----------
--- Visibles para toda la organización (igual que en la versión anterior: la
--- transparencia entre áreas es intencional). Si más adelante quieres
--- restringir esto por área, cambia esta política.
-create policy "cases_select_authenticated"
+-- Secretaría, Gerencia, Jurídico y el administrador ven todos los procesos.
+-- Coordinador y Analista solo ven los que tienen asignados a ellos; Área
+-- requirente solo ve los de su propia área — ver can_view_case() arriba.
+create policy "cases_select_scoped"
   on public.cases for select
   to authenticated
-  using (true);
+  using (public.can_view_case(id));
 
 -- Puede registrar un proceso nuevo: alguien del área requirente (para su
 -- propia área) o el administrador (para cualquier área).
@@ -301,12 +400,13 @@ create policy "cases_delete_admin_only"
   using (public.is_admin());
 
 -- ---------- case_events ----------
--- El historial es visible para todos (igual que los procesos) y es de solo
--- inserción — una vez escrito un evento, nadie lo edita ni lo borra.
-create policy "case_events_select_authenticated"
+-- Visible para quien pueda ver el proceso al que pertenece (misma regla que
+-- cases, arriba) — y es de solo inserción, una vez escrito un evento nadie
+-- lo edita ni lo borra.
+create policy "case_events_select_scoped"
   on public.case_events for select
   to authenticated
-  using (true);
+  using (public.can_view_case(case_id));
 
 create policy "case_events_insert_if_can_act_on_case"
   on public.case_events for insert
@@ -330,10 +430,12 @@ create policy "case_events_insert_if_can_act_on_case"
   );
 
 -- ---------- attachments ----------
-create policy "attachments_select_authenticated"
+-- Visibles para quien pueda ver el proceso al que pertenecen (misma regla
+-- que cases y case_events, arriba).
+create policy "attachments_select_scoped"
   on public.attachments for select
   to authenticated
-  using (true);
+  using (public.can_view_case(case_id));
 
 create policy "attachments_insert_own"
   on public.attachments for insert

@@ -98,6 +98,13 @@ forzar una acción en nombre de otra persona, pero esa acción queda siempre
 registrada con el nombre real de la administradora, nunca suplantando a
 otra persona.
 
+Además, cada puesto solo ve lo que le corresponde: Coordinación y Análisis
+solo ven los procesos que tienen asignados a ellos mismos, y un Área
+requirente solo ve los procesos de su propia área — el resto de los puestos
+(Secretaría, Gerencia, Jurídico, Administrador) ven todos los procesos,
+porque necesitan seguimiento del flujo completo. La tabla de permisos
+completa está en `SETUP.md`.
+
 ## Notificaciones por correo — registradas, sin enviar todavía
 
 Cada vez que un proceso cambia de etapa o se devuelve, la aplicación

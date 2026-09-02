@@ -149,22 +149,65 @@ asigna su puesto. Tú serás la primera administradora.
    "Actualizar"). Ahora deberías ver la pestaña **"Áreas y usuarios"**,
    señal de que ya tienes permisos de administradora.
 
-### Agregar al resto del equipo
+### Agregar al resto del equipo (invitar por correo)
 
 A partir de aquí, todo se hace desde la propia aplicación, sin volver a
-tocar Supabase:
+tocar Supabase. La forma recomendada es que tú invites primero — así cada
+persona entra ya con su puesto y permisos asignados, y solo tiene que poner
+su contraseña:
 
-1. Cada persona del equipo entra a la página y crea su propia cuenta desde
-   "Crear cuenta" (con su correo real).
-2. Tú, como administradora, entras a **"Áreas y usuarios"**. Ahí verás a
-   cada persona que se haya registrado, marcada como "Sin puesto asignado —
-   pendiente".
-3. Haz clic en **"Perfil" → "Editar perfil"** de esa persona y asígnale su
+1. Entra a **"Áreas y usuarios" → "Invitar persona"**.
+2. Escribe el correo real de la persona, su nombre (opcional), marca su
    puesto (Secretaría, Gerencia, Coordinador, Analista, Jurídico, o Área
-   requirente con su área correspondiente), su nombre completo y los demás
-   datos. Guarda los cambios.
-4. Esa persona ya puede usar Procomly con su propia cuenta y solo verá
-   habilitadas las acciones que le correspondan a su puesto.
+   requirente con su área correspondiente) y si va a ser administradora.
+   Haz clic en **Invitar**.
+3. Avísale tú misma a esa persona — por correo, WhatsApp, como prefieras —
+   que entre a Procomly y cree su cuenta ("Crear cuenta") usando **ese mismo
+   correo**. En cuanto lo haga, automáticamente queda con el puesto y los
+   permisos que ya le asignaste, sin que tengas que volver a tocar nada.
+4. Mientras esa persona no haya creado su cuenta, la verás listada bajo
+   "Personas invitadas — todavía no han creado su cuenta", con botones para
+   **Editar** (corregir el puesto o los datos que le asignaste) o
+   **Cancelar invitación**.
+
+También puede pasar que alguien cree su cuenta por su cuenta, sin que la
+hayas invitado antes (por ejemplo, si le compartes el enlace del sitio sin
+más). En ese caso aparecerá en el **Directorio de usuarios** marcada como
+"Sin puesto asignado — pendiente", y le asignas su puesto igual que antes,
+con **"Perfil" → "Editar perfil"**.
+
+---
+
+## Tabla de permisos por puesto
+
+Esto es lo que cada puesto puede y no puede hacer dentro de Procomly. Estas
+reglas no son solo visuales: están aplicadas dentro de la propia base de
+datos (Row Level Security), así que aunque alguien intentara forzarlas por
+otro medio, quedan bloqueadas igual. Una persona puede tener más de un
+puesto a la vez (por ejemplo, ser Analista y también de Consultoría
+Jurídica) — en ese caso puede hacer todo lo que cualquiera de sus puestos le
+permita.
+
+| Puesto | Qué procesos ve | Puede crear una solicitud nueva | Puede actuar (avanzar / devolver) | Adjuntar archivos | Áreas y usuarios |
+|---|---|---|---|---|---|
+| **Administrador** | Todos, sin excepción | Sí, para cualquier área | Sí, en cualquier etapa (queda registrado a su propio nombre) | Sí, en cualquier proceso | Crear/editar áreas, invitar personas, asignar cualquier puesto (incluido administrador) |
+| **Secretaría Administrativa** | Todos | No | Solo cuando el proceso está en la etapa "Secretaría" | Sí, en los procesos que ve | Solo puede ver el directorio (lectura) |
+| **Gerencia de Compras** | Todos | No | Solo en las etapas "Gerencia" y "Publicación" | Sí, en los procesos que ve | Solo lectura |
+| **Coordinador** | Solo los procesos que tiene asignados a él/ella | No | Solo en la etapa "Coordinador", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
+| **Analista** | Solo los procesos que tiene asignados a él/ella | No | Solo en las etapas "Analista" y "Corrección", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
+| **Consultoría Jurídica** | Todos | No | Solo en la etapa "Jurídico" | Sí, en los procesos que ve | Solo lectura |
+| **Área requirente** | Solo los procesos de su propia área | Sí, únicamente para su propia área | Solo en la etapa "Área — corrigiendo", en procesos de su área | Sí, en los procesos de su área | Solo lectura |
+
+Notas:
+
+- "Puede actuar" incluye siempre la opción de **devolver** el proceso a una
+  etapa anterior con un motivo, cuando le corresponde actuar en la etapa
+  actual — no es una acción aparte.
+- La **bitácora de notificaciones** (registro de qué se "notificó" y
+  cuándo) y las **invitaciones** solo las puede ver y usar el administrador.
+- Una persona sin ningún puesto asignado todavía (recién registrada, sin
+  invitación previa) no puede hacer nada dentro de Procomly hasta que un
+  administrador le asigne su puesto.
 
 ---
 
@@ -176,6 +219,104 @@ alguien intentara forzarlo por otros medios, la base de datos misma rechaza
 la acción — las reglas de seguridad (Row Level Security) y una validación
 adicional de "qué pasos son válidos" viven en Supabase, no solo en la
 página web.
+
+**Me sale "permission denied for table..." al iniciar sesión**
+Significa que el proyecto se creó con una versión de `supabase-schema.sql`
+anterior a la que incluye los permisos base de tabla. Ve al **SQL Editor**
+de tu proyecto, corre una vez esto y vuelve a intentar:
+
+```sql
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on all tables in schema public to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;
+```
+
+**Ya tenía mi proyecto creado antes de que existieran las invitaciones — ¿cómo lo actualizo?**
+Si creaste tu proyecto antes de esta versión (no tienes todavía "Invitar
+persona" en Áreas y usuarios), ve al **SQL Editor** de tu proyecto y corre
+esto una sola vez — es seguro, no borra nada de lo que ya tienes:
+
+```sql
+alter table public.areas add column if not exists secretary_name text not null default '';
+alter table public.areas add column if not exists secretary_contact text not null default '';
+
+create table if not exists public.pending_profiles (
+  email           text primary key,
+  full_name       text not null default '',
+  employee_id     text not null default '',
+  position_title  text not null default '',
+  department      text not null default '',
+  area_id         uuid references public.areas (id) on delete set null,
+  roles           text[] not null default '{}',
+  coord_tipos     text[] not null default '{}',
+  is_admin        boolean not null default false,
+  created_at      timestamptz not null default now()
+);
+alter table public.pending_profiles enable row level security;
+drop policy if exists "pending_profiles_admin_only" on public.pending_profiles;
+create policy "pending_profiles_admin_only" on public.pending_profiles for all
+  to authenticated using (public.is_admin()) with check (public.is_admin());
+grant select, insert, update, delete on public.pending_profiles to anon, authenticated;
+
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare invite public.pending_profiles;
+begin
+  select * into invite from public.pending_profiles where lower(email) = lower(new.email) limit 1;
+  if found then
+    insert into public.profiles (id, email, full_name, employee_id, position_title, department, area_id, roles, coord_tipos, is_admin)
+    values (new.id, new.email, invite.full_name, invite.employee_id, invite.position_title, invite.department, invite.area_id, invite.roles, invite.coord_tipos, invite.is_admin);
+    delete from public.pending_profiles where lower(email) = lower(new.email);
+  else
+    insert into public.profiles (id, email) values (new.id, new.email);
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.can_view_case(target_case_id uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (
+    select 1 from public.cases c
+    where c.id = target_case_id
+      and (
+        public.is_admin()
+        or public.has_role('secretaria')
+        or public.has_role('gerente')
+        or public.has_role('juridico')
+        or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+        or (public.has_role('analista') and c.analista_id = auth.uid())
+        or (public.has_role('area') and c.area_id = public.my_area_id())
+      )
+  );
+$$;
+
+drop policy if exists "cases_select_authenticated" on public.cases;
+drop policy if exists "cases_select_scoped" on public.cases;
+create policy "cases_select_scoped" on public.cases for select to authenticated using (public.can_view_case(id));
+
+drop policy if exists "case_events_select_authenticated" on public.case_events;
+drop policy if exists "case_events_select_scoped" on public.case_events;
+create policy "case_events_select_scoped" on public.case_events for select to authenticated using (public.can_view_case(case_id));
+
+drop policy if exists "attachments_select_authenticated" on public.attachments;
+drop policy if exists "attachments_select_scoped" on public.attachments;
+create policy "attachments_select_scoped" on public.attachments for select to authenticated using (public.can_view_case(case_id));
+```
+
+Después de correrlo, sube también los archivos `app.js`, `supabase-schema.sql`
+y `SETUP.md` actualizados a tu repositorio de GitHub (reemplazando los que
+ya tenías) para que la pantalla de "Invitar persona" aparezca.
+
+**Al confirmar mi correo me manda a una página que no carga ("localhost rechazó la conexión")**
+Es normal y no significa que algo falló: tu cuenta ya quedó confirmada en
+Supabase, solo que la página a la que te redirige después de confirmar
+("Site URL") todavía apunta a una dirección de prueba por defecto. Para
+corregirlo: en Supabase ve a **Authentication → URL Configuration** y
+cambia la **Site URL** por la dirección real de tu sitio (por ejemplo
+`https://tu-usuario.github.io/nombre-del-repo/`). Mientras tanto, puedes
+ignorar esa página y simplemente volver a abrir tu sitio e iniciar sesión
+normalmente.
 
 **¿Dónde se guardan los archivos adjuntos?**
 En Supabase Storage, en el bucket privado `attachments`. Nadie puede acceder
