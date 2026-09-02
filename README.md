@@ -1,75 +1,120 @@
-# Proceso de Compras automatizado — ETED
+# Procomly — ETED
 
-Herramienta interna para dar seguimiento a cada solicitud de compra o licitación de la Gerencia de Compras de ETED (Empresa de Transmisión Eléctrica Dominicana), desde que la registra el área requirente hasta que se publica, pasando por Secretaría Administrativa, Gerencia de Compras, Coordinación, Análisis y Consultoría Jurídica.
+**Procomly** (Proceso de Compras y Licitaciones Automatizado)
 
-Es un sitio **100% estático**: un solo archivo HTML (`index.html`) que corre entero en el navegador de quien lo usa. No hay servidor, base de datos ni backend — toda la información (procesos, usuarios, áreas) se guarda en el almacenamiento local (`localStorage`) del navegador de cada persona.
+Herramienta interna para dar seguimiento a cada solicitud de compra o
+licitación de la Gerencia de Compras de ETED (Empresa de Transmisión
+Eléctrica Dominicana), desde que la registra el área requirente hasta que se
+publica, pasando por Secretaría Administrativa, Gerencia de Compras,
+Coordinación, Análisis y Consultoría Jurídica.
 
-## ⚠️ Qué significa esto en la práctica — léelo antes de usarlo en equipo
+## Cómo está construida
 
-Como no hay un servidor compartido, **cada navegador tiene su propia copia de los datos**. Si dos personas abren esta página en dos computadoras distintas, cada una ve y guarda su propia información — los cambios de una no aparecen automáticamente en la otra. Esta versión es ideal para:
+Es un sitio **estático** (funciona en GitHub Pages, sin necesidad de un
+servidor propio) conectado a un backend real de **[Supabase](https://supabase.com)**:
 
-- Probar el flujo completo y la interfaz con el equipo antes de invertir en una versión con servidor.
-- Que una sola persona (por ejemplo, quien administra Compras) lleve el control desde un único navegador/computadora.
-- Una demostración o capacitación.
+- **Base de datos real** (PostgreSQL) — los procesos, usuarios, áreas e
+  historial se guardan de forma permanente y compartida, no en el navegador
+  de cada persona.
+- **Autenticación real** — cada persona crea su propia cuenta con su correo
+  y contraseña; no hay PINs simulados ni credenciales de mentira.
+- **Seguridad aplicada en la propia base de datos** (Row Level Security +
+  una validación de "qué pasos del proceso son válidos") — así que las
+  reglas de quién puede hacer qué no dependen únicamente de la página web:
+  aunque alguien intentara saltárselas por otro medio, la base de datos las
+  hace cumplir igual.
+- **Archivos adjuntos reales** guardados en Supabase Storage, en un almacén
+  privado, accesibles solo mediante enlaces temporales dentro de la
+  aplicación.
 
-**No es apta todavía** para que varias personas en distintas oficinas trabajen sobre los mismos procesos en tiempo real — para eso hace falta conectarla a una base de datos compartida (ver la sección "Próximo paso: una versión con servidor" más abajo).
+Todo el mundo que use Procomly ve los mismos datos, actualizados, sin
+importar desde qué computadora entre.
 
-Los "usuarios y contraseñas" de esta versión son un sistema simulado (un PIN de 4 dígitos por persona, guardado con hash en el propio navegador) para poder probar los distintos roles del flujo. **No es un sistema de autenticación de nivel empresarial** — no lo uses para proteger información sensible.
+## Antes de publicarla: crea tu proyecto de Supabase
+
+Este repositorio es solo la parte visual — necesita conectarse a un proyecto
+de Supabase (gratuito) para funcionar. **Sigue primero la guía
+[`SETUP.md`](./SETUP.md)**, que te lleva paso a paso desde crear la cuenta
+de Supabase hasta convertirte en la primera administradora de Procomly.
+No hace falta saber programar.
+
+En resumen, `SETUP.md` cubre:
+
+1. Crear el proyecto en Supabase y ejecutar `supabase-schema.sql` (crea las
+   tablas y todas las reglas de seguridad).
+2. Pegar la URL y la clave pública de tu proyecto en `config.js`.
+3. Crear tu cuenta dentro de la aplicación y volverte administradora.
 
 ## Publicar en GitHub Pages
 
-1. Crea un repositorio en GitHub (puede ser privado) y sube el contenido de esta carpeta (o simplemente arrastra `index.html`, `README.md` y `.gitignore` a un repo nuevo desde la interfaz web de GitHub).
-2. En el repositorio, ve a **Settings → Pages**.
-3. En "Build and deployment", selecciona **Deploy from a branch**, elige la rama `main` (o `master`) y la carpeta `/ (root)`.
-4. Guarda. GitHub te dará una URL parecida a `https://tu-usuario.github.io/nombre-del-repo/` — en uno o dos minutos ya estará publicada.
-5. Comparte esa URL con quien deba usar la bitácora. Recuerda: cada persona que la abra tendrá su propio almacenamiento local (ver advertencia arriba).
+Una vez editado `config.js` con los datos de tu proyecto de Supabase (Parte
+2 de `SETUP.md`):
 
-No hace falta ningún paso de build, `npm install`, ni configuración adicional — GitHub Pages sirve el archivo `index.html` directamente.
+1. Crea un repositorio en GitHub (puede ser privado) y sube **todos** los
+   archivos de esta carpeta a la **raíz** del repositorio — no dentro de una
+   subcarpeta. Si arrastras archivos desde tu computadora a la página de
+   GitHub, arrástralos uno por uno o selecciónalos todos juntos, pero nunca
+   arrastres la carpeta contenedora completa (eso los deja anidados un nivel
+   más abajo y la página no cargará bien).
+2. En el repositorio, ve a **Settings → Pages**.
+3. En "Build and deployment", selecciona **Deploy from a branch**, elige la
+   rama `main` y la carpeta `/ (root)`.
+4. Guarda. GitHub te dará una URL parecida a
+   `https://tu-usuario.github.io/nombre-del-repo/` — en uno o dos minutos ya
+   estará publicada.
+5. Comparte esa URL con tu equipo. Cada persona deberá crear su propia
+   cuenta (ver `SETUP.md`, sección "Agregar al resto del equipo").
+
+No hace falta ningún paso de build, `npm install`, ni configuración
+adicional — GitHub Pages sirve los archivos directamente.
 
 ## Estructura del repositorio
 
 ```
-index.html      La aplicación completa (HTML + CSS + JavaScript en un solo archivo)
-README.md       Este archivo
-.gitignore      Ignora archivos comunes de sistema operativo/editor
+index.html            La página (estructura HTML + carga de los demás archivos)
+styles.css             Todo el diseño visual (inspirado en Odoo)
+app.js                  Toda la lógica de la aplicación
+config.js               Conexión a tu proyecto de Supabase (URL + clave pública) — lo editas tú
+supabase-schema.sql      Script que crea las tablas y las reglas de seguridad en Supabase
+SETUP.md                 Guía paso a paso de configuración inicial
+README.md                Este archivo
+.gitignore                Ignora archivos comunes de sistema operativo/editor
 ```
 
-## Primer uso
+## Cómo funciona el flujo de un proceso
 
-Al abrir la página por primera vez no hay procesos ni usuarios registrados. El primer paso es:
+Cada solicitud de compra pasa, en orden, por: **Secretaría Administrativa →
+Gerencia de Compras → Coordinación → Análisis → (Consultoría Jurídica) →
+Publicación**. En cualquier etapa, quien la tiene a cargo puede **devolverla**
+a una etapa anterior con un motivo, si detecta algo que corregir — el
+proceso queda marcado como "en corrección" hasta que se vuelve a completar
+correctamente. Todo el historial (quién hizo qué y cuándo) queda registrado
+de forma permanente.
 
-1. Activar el "Modo administrador" (botón arriba a la derecha) — la primera vez te pedirá crear un PIN de administrador.
-2. Ir a la pestaña **"Áreas y usuarios"** y registrar ahí a las personas: cada una con su nombre, número de empleado, posición, puesto(s) dentro del flujo (área requirente, Secretaría Administrativa, Gerente de Compras, Coordinador, Analista, Consultoría Jurídica), el área o departamento al que pertenece, su correo y, opcionalmente, una contraseña inicial.
-3. Si vas a registrar personas del área requirente, primero crea las áreas (con su gerente o director responsable) en esa misma pestaña.
-4. Cada persona, al identificarse por primera vez con su nombre en "Tú eres" (arriba de la página), crea su propio PIN de 4 dígitos para futuras veces.
+Quién puede actuar en cada etapa depende del **puesto** que la
+administradora le haya asignado a cada persona (ver `SETUP.md`) — no de
+quién dice ser dentro de la página. Una administradora puede, si hace falta,
+forzar una acción en nombre de otra persona, pero esa acción queda siempre
+registrada con el nombre real de la administradora, nunca suplantando a
+otra persona.
 
-Desde ese momento, cualquier proceso nuevo se puede registrar desde la pestaña **"Nueva solicitud"**, con sus archivos adjuntos desde el momento de creación, y queda asignado automáticamente a Secretaría Administrativa cuando solo hay una persona con ese puesto registrada.
+## Notificaciones por correo — registradas, sin enviar todavía
 
-## Notificaciones por correo — código listo, sin conectar todavía
+Cada vez que un proceso cambia de etapa o se devuelve, la aplicación
+registra una notificación (a quién iba dirigida, asunto y cuerpo) en la
+tabla `notifications_log` de Supabase y muestra un aviso en pantalla, pero
+**todavía no envía ningún correo real**. Se dejó así intencionalmente para
+no enviar correos hasta que el equipo de TI de ETED conecte una cuenta real
+de Microsoft 365/Outlook.
 
-Cada vez que un proceso pasa de una persona a otra (o se devuelve a una etapa anterior), la aplicación simula el envío de un correo: lo muestra como una notificación emergente en pantalla y lo registra en la consola del navegador (`F12` → pestaña "Console"), pero **no envía ningún correo real todavía**.
+Para activar el envío real hace falta un pequeño servicio adicional (por
+ejemplo, una Supabase Edge Function) que lea `notifications_log` y llame a
+la Microsoft Graph API con credenciales guardadas de forma segura del lado
+del servidor — nunca directamente en esta página, ya que es pública. Es un
+paso natural para dar una vez el resto de Procomly esté en uso.
 
-Se dejó preparado así intencionalmente (fue una decisión explícita al construir esta versión) para no enviar correos reales hasta que el equipo de TI de ETED conecte una cuenta de Microsoft 365/Outlook real. Todo el código ya llama a una única función central:
+## ¿Preguntas?
 
-```js
-function sendEmailNotification(toEmail, subject, body){ ... }
-```
-
-(la encuentras buscando `sendEmailNotification` dentro de `index.html`, alrededor de la línea 729). Es el único lugar que hay que modificar para conectar el envío real — el resto de la aplicación (creación de usuarios, asignaciones, devoluciones de proceso, etc.) ya llama a esta función en el momento correcto con el destinatario, asunto y cuerpo del mensaje.
-
-Para conectarla de verdad hay dos caminos típicos con Outlook/Microsoft 365:
-
-- **Microsoft Graph API** (`https://graph.microsoft.com/v1.0/me/sendMail` o el endpoint de una cuenta de servicio) — es lo que Microsoft recomienda actualmente para enviar correo de forma programática. Requiere registrar una aplicación en Azure Active Directory / Entra ID y manejar un token de acceso.
-- **SMTP con una "contraseña de aplicación"** — más simple de implementar, pero Microsoft lo está descontinuando progresivamente para muchas cuentas empresariales, así que conviene confirmar con el equipo de TI si sigue disponible para el dominio de ETED.
-
-Cualquiera de las dos opciones necesita credenciales que **no deben quedar escritas directamente en este archivo HTML público** (quedarían visibles para cualquiera que abra la página) — hace falta un pequeño servicio intermedio (backend) que reciba la solicitud de envío desde la página y la reenvíe a Microsoft con las credenciales guardadas de forma segura del lado del servidor. Ese backend es, además, el mismo componente que haría falta para el "próximo paso" descrito abajo (una base de datos compartida), así que conviene resolver ambas cosas juntas.
-
-## Próximo paso: una versión con servidor
-
-Esta versión estática es un buen punto de partida, pero para que **todo el equipo** trabaje sobre los mismos procesos, en tiempo real, desde distintas computadoras, hace falta:
-
-1. Una base de datos compartida (por ejemplo, una API sencilla con una base de datos como PostgreSQL, o un servicio como Supabase/Firebase) donde vivan los procesos, usuarios y áreas en lugar de en `localStorage`.
-2. Autenticación real (usuario/contraseña verificados en el servidor, no en el navegador).
-3. El envío real de correos descrito arriba.
-
-Esto es una decisión de infraestructura (dónde alojarlo, qué presupuesto y con qué proveedor) que conviene tomar en conjunto con el equipo de TI de ETED cuando el equipo esté listo para dar ese paso.
+Revisa primero `SETUP.md` — cubre la creación del proyecto, la conexión y
+las preguntas frecuentes más comunes (seguridad, archivos adjuntos, costos,
+contraseñas olvidadas).
