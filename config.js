@@ -12,6 +12,6 @@
 // ============================================================================
 
 window.ETED_CONFIG = {
-  SUPABASE_URL: "https://jkpgodeffvatvoxqgvtd.supabase.co/rest/v1/",
+  SUPABASE_URL: "https://jkpgodeffvatvoxqgvtd.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImprcGdvZGVmZnZhdHZveHFndnRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzNTg1NTYsImV4cCI6MjEwMzkzNDU1Nn0.bsd97O09sVyJbgCxDN-DefzBaPr7LXpg_lb2ngfktkU"
 };
