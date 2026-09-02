@@ -1,4 +1,4 @@
-# Bitácora de Licitaciones — ETED
+# Proceso de Compras automatizado — ETED
 
 Herramienta interna para dar seguimiento a cada solicitud de compra o licitación de la Gerencia de Compras de ETED (Empresa de Transmisión Eléctrica Dominicana), desde que la registra el área requirente hasta que se publica, pasando por Secretaría Administrativa, Gerencia de Compras, Coordinación, Análisis y Consultoría Jurídica.
 
