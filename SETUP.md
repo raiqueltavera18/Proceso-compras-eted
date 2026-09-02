@@ -192,7 +192,7 @@ permita.
 |---|---|---|---|---|---|
 | **Administrador** | Todos, sin excepción | Sí, para cualquier área | Sí, en cualquier etapa (queda registrado a su propio nombre) | Sí, en cualquier proceso | Crear/editar áreas, invitar personas, asignar cualquier puesto (incluido administrador) |
 | **Secretaría Administrativa** | Todos | No | Solo cuando el proceso está en la etapa "Secretaría" | Sí, en los procesos que ve | Solo puede ver el directorio (lectura) |
-| **Gerencia de Compras** | Todos | No | Solo en las etapas "Gerencia" y "Publicación" | Sí, en los procesos que ve | Solo lectura |
+| **Gerencia de Compras** | Todos | No | Solo en las etapas "Gerencia", "Publicación", y todo el seguimiento posterior a la publicación (adjudicar, declarar desierto, registrar orden de compra, marcar pagado y cerrar) | Sí, en los procesos que ve | Solo lectura |
 | **Coordinador** | Solo los procesos que tiene asignados a él/ella | No | Solo en la etapa "Coordinador", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
 | **Analista** | Solo los procesos que tiene asignados a él/ella | No | Solo en las etapas "Analista" y "Corrección", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
 | **Consultoría Jurídica** | Todos | No | Solo en la etapa "Jurídico" | Sí, en los procesos que ve | Solo lectura |
@@ -307,6 +307,105 @@ create policy "attachments_select_scoped" on public.attachments for select to au
 Después de correrlo, sube también los archivos `app.js`, `supabase-schema.sql`
 y `SETUP.md` actualizados a tu repositorio de GitHub (reemplazando los que
 ya tenías) para que la pantalla de "Invitar persona" aparezca.
+
+**Ya tenía mi proyecto creado antes del seguimiento posterior a la publicación (adjudicación, orden de compra, pago, cierre) — ¿cómo lo actualizo?**
+Si tus procesos publicados todavía se quedan "terminados" sin más pasos
+(no ves "Registrar adjudicación" en un proceso publicado), corre esto una
+sola vez en el **SQL Editor** de tu proyecto — es seguro, no borra ni
+modifica ningún proceso que ya tengas:
+
+```sql
+alter table public.cases
+  add column if not exists modalidad                 text not null default '',
+  add column if not exists referencia                 text not null default '',
+  add column if not exists no_comunicacion            text not null default '',
+  add column if not exists no_solicitud_pedido        text not null default '',
+  add column if not exists proceso_pacc               boolean not null default false,
+  add column if not exists monto_presupuestado        numeric,
+  add column if not exists monto_adjudicado           numeric,
+  add column if not exists empresa_adjudicada         text not null default '',
+  add column if not exists no_orden_compra             text not null default '',
+  add column if not exists fecha_publicacion           date,
+  add column if not exists fecha_adjudicacion          date,
+  add column if not exists fecha_orden                 date,
+  add column if not exists fecha_asignacion_analista    date,
+  add column if not exists fecha_salida_correccion      date,
+  add column if not exists fecha_entrada_corregido      date,
+  add column if not exists estatus_legado               text not null default '',
+  add column if not exists observaciones                text not null default '';
+
+alter table public.cases drop constraint if exists cases_stage_check;
+alter table public.cases add constraint cases_stage_check
+  check (stage in ('secretaria','gerente','coordinador','analista','correccion',
+                    'area-correccion','juridico','publicacion','publicado',
+                    'adjudicado','desierto','pendiente-pago','cerrado','cancelado'));
+
+create or replace function public.enforce_case_transition()
+returns trigger language plpgsql as $$
+declare allowed text[];
+begin
+  if public.is_admin() then return new; end if;
+  if old.stage = new.stage then return new; end if;
+  allowed := case old.stage
+    when 'secretaria'      then array['gerente','cancelado']
+    when 'gerente'         then array['coordinador','secretaria','area-correccion','cancelado']
+    when 'coordinador'     then array['analista','secretaria','gerente','area-correccion','cancelado']
+    when 'analista'        then array['juridico','secretaria','gerente','coordinador','area-correccion','cancelado']
+    when 'correccion'      then array['juridico','area-correccion','cancelado']
+    when 'area-correccion' then array['analista','cancelado']
+    when 'juridico'        then array['publicacion','secretaria','gerente','coordinador','analista','area-correccion','cancelado']
+    when 'publicacion'     then array['publicado','cancelado']
+    when 'publicado'       then array['adjudicado','desierto','cancelado']
+    when 'adjudicado'      then array['pendiente-pago','cancelado']
+    when 'pendiente-pago'  then array['cerrado']
+    else array[]::text[]
+  end;
+  if not (new.stage = any(allowed)) then
+    raise exception 'Transición de etapa no permitida: % -> %', old.stage, new.stage;
+  end if;
+  return new;
+end;
+$$;
+
+drop policy if exists "cases_update_stage_owner" on public.cases;
+create policy "cases_update_stage_owner" on public.cases for update to authenticated
+  using (
+    public.is_admin()
+    or (stage = 'secretaria' and public.has_role('secretaria') and (secretaria_id is null or secretaria_id = auth.uid()))
+    or (stage = 'gerente' and public.has_role('gerente') and (gerente_id is null or gerente_id = auth.uid()))
+    or (stage = 'publicacion' and public.has_role('gerente'))
+    or (stage = 'coordinador' and coordinador_id = auth.uid())
+    or (stage in ('analista','correccion') and analista_id = auth.uid())
+    or (stage = 'area-correccion' and public.has_role('area') and area_id = public.my_area_id())
+    or (stage = 'juridico' and public.has_role('juridico'))
+    or (stage in ('publicado','adjudicado','pendiente-pago') and public.has_role('gerente'))
+  ) with check (true);
+
+drop policy if exists "case_events_insert_if_can_act_on_case" on public.case_events;
+create policy "case_events_insert_if_can_act_on_case" on public.case_events for insert to authenticated
+  with check (
+    actor_id = auth.uid()
+    and exists (
+      select 1 from public.cases c
+      where c.id = case_id
+        and (
+          public.is_admin()
+          or (c.stage = 'secretaria' and public.has_role('secretaria'))
+          or (c.stage = 'gerente' and public.has_role('gerente') and (c.gerente_id is null or c.gerente_id = auth.uid()))
+          or (c.stage = 'publicacion' and public.has_role('gerente'))
+          or (c.stage = 'coordinador' and c.coordinador_id = auth.uid())
+          or (c.stage in ('analista','correccion') and c.analista_id = auth.uid())
+          or (c.stage = 'area-correccion' and public.has_role('area') and c.area_id = public.my_area_id())
+          or (c.stage = 'juridico' and public.has_role('juridico'))
+          or (c.stage in ('publicado','adjudicado','pendiente-pago') and public.has_role('gerente'))
+        )
+    )
+  );
+```
+
+Después de correrlo, sube también los archivos `app.js`, `supabase-schema.sql`
+y `SETUP.md` actualizados a tu repositorio de GitHub (reemplazando los que
+ya tenías).
 
 **Al confirmar mi correo me manda a una página que no carga ("localhost rechazó la conexión")**
 Es normal y no significa que algo falló: tu cuenta ya quedó confirmada en

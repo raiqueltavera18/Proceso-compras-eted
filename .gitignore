@@ -14,3 +14,9 @@ desktop.ini
 # Logs / temporales
 *.log
 .tmp/
+
+# Archivos de prueba local (mock de Supabase) — no forman parte del sitio
+mock-supabase.js
+test-seed.js
+test-config.js
+test-index.html

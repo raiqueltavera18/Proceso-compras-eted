@@ -85,11 +85,24 @@ README.md                Este archivo
 
 Cada solicitud de compra pasa, en orden, por: **Secretaría Administrativa →
 Gerencia de Compras → Coordinación → Análisis → (Consultoría Jurídica) →
-Publicación**. En cualquier etapa, quien la tiene a cargo puede **devolverla**
-a una etapa anterior con un motivo, si detecta algo que corregir — el
-proceso queda marcado como "en corrección" hasta que se vuelve a completar
+Publicación → Adjudicación → Orden de compra → Pago → Cierre**. En cualquier
+etapa previa a la publicación, quien la tiene a cargo puede **devolverla** a
+una etapa anterior con un motivo, si detecta algo que corregir — el proceso
+queda marcado como "en corrección" hasta que se vuelve a completar
 correctamente. Todo el historial (quién hizo qué y cuándo) queda registrado
 de forma permanente.
+
+Una vez publicado, Gerencia de Compras da seguimiento a lo que antes se
+llevaba a mano en el Excel de Compras Menores: registra la empresa
+adjudicada y el monto, o declara el proceso **desierto** si no hubo ofertas
+válidas; luego registra el número de orden de compra y, cuando se paga,
+**cierra** el proceso. Cada tarjeta de proceso además tiene una sección
+plegable de "Datos administrativos" (modalidad, referencia, números de
+comunicación y de solicitud de pedido, monto presupuestado, si es parte del
+PACC, y observaciones) — los mismos datos que antes solo vivían en el
+Excel compartido, ahora dentro de Procomly. En "Panorama de tiempos" se
+puede descargar un CSV con un renglón por proceso y todas estas columnas,
+listo para reemplazar el reporte manual.
 
 Quién puede actuar en cada etapa depende del **puesto** que la
 administradora le haya asignado a cada persona (ver `SETUP.md`) — no de

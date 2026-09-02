@@ -81,12 +81,37 @@ create table public.cases (
   solicitante     text not null default '',
   stage           text not null default 'secretaria'
                     check (stage in ('secretaria','gerente','coordinador','analista','correccion',
-                                      'area-correccion','juridico','publicacion','publicado','cancelado')),
+                                      'area-correccion','juridico','publicacion','publicado',
+                                      'adjudicado','desierto','pendiente-pago','cerrado','cancelado')),
   secretaria_id   uuid references public.profiles (id),
   gerente_id      uuid references public.profiles (id),
   coordinador_id  uuid references public.profiles (id),
   analista_id     uuid references public.profiles (id),
   rework_count    int not null default 0,
+
+  -- Campos administrativos adicionales, tomados del Excel de seguimiento de
+  -- Compras Menores que este software reemplaza — se llenan a lo largo del
+  -- proceso (no todos aplican desde el inicio) y quedan visibles/editables
+  -- para quien "tiene la pelota" en la etapa actual, igual que el resto de
+  -- los campos de un proceso.
+  modalidad                 text not null default '',   -- p. ej. "CONTRATACIÓN MENOR", "LICITACIÓN PÚBLICA NACIONAL"...
+  referencia                text not null default '',   -- p. ej. "ETED-DAF-CM-2026-0076"
+  no_comunicacion           text not null default '',
+  no_solicitud_pedido       text not null default '',
+  proceso_pacc              boolean not null default false, -- ¿forma parte del Plan Anual de Compras y Contrataciones?
+  monto_presupuestado       numeric,
+  monto_adjudicado          numeric,
+  empresa_adjudicada        text not null default '',
+  no_orden_compra           text not null default '',
+  fecha_publicacion         date,
+  fecha_adjudicacion        date,
+  fecha_orden               date,
+  fecha_asignacion_analista date,
+  fecha_salida_correccion   date,
+  fecha_entrada_corregido   date,
+  estatus_legado            text not null default '',   -- estatus textual original, solo para procesos importados del Excel
+  observaciones             text not null default '',
+
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now()
 );
@@ -270,7 +295,10 @@ begin
     when 'area-correccion' then array['analista','cancelado']
     when 'juridico'        then array['publicacion','secretaria','gerente','coordinador','analista','area-correccion','cancelado']
     when 'publicacion'     then array['publicado','cancelado']
-    else array[]::text[]  -- 'publicado' y 'cancelado' son etapas finales
+    when 'publicado'       then array['adjudicado','desierto','cancelado']
+    when 'adjudicado'      then array['pendiente-pago','cancelado']
+    when 'pendiente-pago'  then array['cerrado']
+    else array[]::text[]  -- 'desierto', 'cerrado' y 'cancelado' son etapas finales
   end;
 
   if not (new.stage = any(allowed)) then
@@ -391,6 +419,10 @@ create policy "cases_update_stage_owner"
     or (stage in ('analista','correccion') and analista_id = auth.uid())
     or (stage = 'area-correccion' and public.has_role('area') and area_id = public.my_area_id())
     or (stage = 'juridico' and public.has_role('juridico'))
+    -- etapas posteriores a la publicación (adjudicación, orden de compra,
+    -- pago, cierre) las administra Gerencia de Compras, igual que el resto
+    -- del seguimiento post-publicación en el Excel que este software reemplaza.
+    or (stage in ('publicado','adjudicado','pendiente-pago') and public.has_role('gerente'))
   )
   with check (true);  -- el destino válido de cada transición lo controla la aplicación
 
@@ -425,6 +457,7 @@ create policy "case_events_insert_if_can_act_on_case"
           or (c.stage in ('analista','correccion') and c.analista_id = auth.uid())
           or (c.stage = 'area-correccion' and public.has_role('area') and c.area_id = public.my_area_id())
           or (c.stage = 'juridico' and public.has_role('juridico'))
+          or (c.stage in ('publicado','adjudicado','pendiente-pago') and public.has_role('gerente'))
         )
     )
   );

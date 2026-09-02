@@ -18,9 +18,20 @@
     "area-correccion":  { label: "Área requirente — corrigiendo",   role: "area" },
     "juridico":         { label: "Consultoría Jurídica",       role: "juridico" },
     "publicacion":      { label: "Lista para publicar",        role: "gerente" },
-    "publicado":        { label: "Publicado",                  role: null },
+    "publicado":        { label: "Publicado — pendiente de adjudicar", role: "gerente" },
+    "adjudicado":       { label: "Adjudicado",                  role: "gerente" },
+    "desierto":         { label: "Desierto",                    role: null },
+    "pendiente-pago":   { label: "Pendiente de pago",            role: "gerente" },
+    "cerrado":          { label: "Cerrado",                      role: null },
     "cancelado":        { label: "Cancelado",                  role: null }
   };
+  // Etapas finales: ya no admiten ninguna acción (salvo forzar como admin).
+  var TERMINAL_STAGES = ["desierto", "cerrado", "cancelado"];
+  function isTerminalStage(stage) { return TERMINAL_STAGES.indexOf(stage) !== -1; }
+  // El proceso ya se publicó (o siguió de largo desde ahí) — se usa para las
+  // estadísticas de "publicados" y "tiempo hasta publicar" del Panorama.
+  var PUBLISHED_OR_LATER_STAGES = ["publicado", "adjudicado", "desierto", "pendiente-pago", "cerrado"];
+  function hasBeenPublished(c) { return PUBLISHED_OR_LATER_STAGES.indexOf(c.stage) !== -1; }
   var ROLE_LABELS = {
     area: "Área requirente", secretaria: "Secretaría Administrativa", gerente: "Gerente de Compras",
     coordinador: "Coordinador", analista: "Analista", juridico: "Consultoría Jurídica"
@@ -29,6 +40,13 @@
   var PIPELINE_ROLE_ORDER = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"];
   var DEVOLVER_STAGE_FOR_ROLE = { secretaria: "secretaria", gerente: "gerente", coordinador: "coordinador", analista: "analista", area: "area-correccion" };
   var DEVOLVER_FIELD_FOR_ROLE = { secretaria: "secretaria_id", gerente: "gerente_id", coordinador: "coordinador_id", analista: "analista_id" };
+  // Modalidades de proceso reales de ETED (mismo catálogo que la hoja
+  // "Modalidad de Procesos" del Excel de seguimiento que este software reemplaza).
+  var MODALIDADES = [
+    "LICITACIÓN PÚBLICA NACIONAL", "LICITACIÓN PÚBLICA ABREVIADA", "SORTEO DE OBRA",
+    "CONTRATACIÓN SIMPLIFICADA", "CONTRATACIÓN MENOR", "CONTRATACIÓN DIRECTA SUJETA AL UMBRAL",
+    "PROCESOS DE EXCEPCIÓN", "PROCESOS DE URGENCIA", "PROCESOS DE EMERGENCIA"
+  ];
   var STUCK_MS = 1000 * 60 * 60 * 24 * 3; // 3 días
   var ATTACH_MAX_BYTES = 8 * 1024 * 1024; // 8 MB por archivo (Supabase Storage soporta más; límite conservador aquí)
   var ATTACH_BUCKET = "attachments";
@@ -75,6 +93,13 @@
     return (n / (1024 * 1024)).toFixed(1) + " MB";
   }
   function optHtml(v, label) { return '<option value="' + esc(v) + '">' + esc(label == null ? v : label) + "</option>"; }
+  function optHtmlSel(v, label, selected) { return '<option value="' + esc(v) + '"' + (selected ? " selected" : "") + '>' + esc(label == null ? v : label) + "</option>"; }
+  function fmtMoney(n) {
+    if (n == null || n === "") return "";
+    var num = Number(n);
+    if (isNaN(num)) return String(n);
+    return num.toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
   function debounce(fn, ms) { var t; return function () { var a = arguments, ctx = this; clearTimeout(t); t = setTimeout(function () { fn.apply(ctx, a); }, ms); }; }
 
   // ============================================================= toasts ==
@@ -634,7 +659,7 @@
     }).length;
   }
   function activeCasesCount() {
-    return state.cases.filter(function (c) { return c.stage !== "publicado" && c.stage !== "cancelado"; }).length;
+    return state.cases.filter(function (c) { return !isTerminalStage(c.stage); }).length;
   }
   function pendingProfilesCount() {
     return state.profiles.filter(function (p) { return !p.roles || !p.roles.length; }).length;
@@ -749,16 +774,20 @@
       var rework = c.rework_count || 0;
       if (rework > 0) withRework++;
       reworkTotal += rework;
-      var closed = c.stage === "publicado" || c.stage === "cancelado";
+      var closed = isTerminalStage(c.stage);
       if (!closed) active++;
       if (!closed) {
         areaActiveCounts[c.area_id] = (areaActiveCounts[c.area_id] || 0) + 1;
         (areaActiveDurations[c.area_id] = areaActiveDurations[c.area_id] || []).push(now - created);
       }
-      if (c.stage === "publicado") {
+      if (hasBeenPublished(c)) {
         published++;
         areaPublishedCounts[c.area_id] = (areaPublishedCounts[c.area_id] || 0) + 1;
-        var lastEv = events[events.length - 1];
+        // tiempo hasta PUBLICAR, no hasta el último evento — si el proceso ya
+        // avanzó a adjudicado/cerrado, se busca el evento donde llegó a
+        // "publicado" en vez del más reciente.
+        var pubEv = events.filter(function (e) { return e.stage_held === "publicado"; })[0];
+        var lastEv = pubEv || events[events.length - 1];
         var endTs = lastEv ? new Date(lastEv.ts).getTime() : now;
         publishedDurations.push(endTs - created);
         (areaDurations[c.area_id] = areaDurations[c.area_id] || []).push(endTs - created);
@@ -809,10 +838,13 @@
       (showAreaSelect ? '<div class="field"><label>Área requirente</label><select class="f-area">' + state.areas.map(function (a) { return optHtml(a.id, a.name); }).join("") + "</select></div>" +
         '<div class="field"><label>Solicitado por (opcional)</label><input type="text" class="f-solicitante" placeholder="Nombre de quien solicita"></div>' : "") +
       "</div>" +
+      '<div class="form-grid">' +
       '<div class="field" style="max-width:280px;"><label>Tipo de proceso</label><div class="radio-row">' +
       '<label><input type="radio" name="f-tipo" value="menor" checked> Compra menor</label>' +
       '<label><input type="radio" name="f-tipo" value="licitacion"> Licitación</label>' +
       "</div></div>" +
+      '<div class="field"><label>Monto presupuestado (RD$, opcional)</label><input type="number" step="0.01" min="0" class="f-monto-presupuestado" placeholder="Ej. 2000000"></div>' +
+      "</div>" +
       '<div class="attach-block" style="border-top:none; padding-top:0; margin-top:0;">' +
       '<p class="attach-title">Archivos adjuntos (opcional)</p>' +
       '<ul class="attach-list f-staged-list"></ul>' +
@@ -857,11 +889,13 @@
         solicitante = state.me.full_name || state.me.email;
       }
       var tipo = form.querySelector('input[name="f-tipo"]:checked').value;
+      var montoPresupuestadoVal = $(".f-monto-presupuestado", form).value;
       var submitBtn = form.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       try {
         var secretarias = profilesByRole("secretaria");
         var caseFields = { title: title, tipo: tipo, area_id: areaId, solicitante: solicitante, stage: "secretaria" };
+        if (montoPresupuestadoVal !== "") caseFields.monto_presupuestado = Number(montoPresupuestadoVal);
         if (secretarias.length === 1) caseFields.secretaria_id = secretarias[0].id;
         var created = await DB.createCase(caseFields);
         await DB.insertEvent({ case_id: created.id, stage_held: "secretaria", actor_id: state.me.id, actor_name: solicitante, role_label: areaName(areaId), action: "registró la solicitud de compra", duration_ms: 0 });
@@ -914,12 +948,16 @@
     var events = eventsForCase(c.id);
     var created = new Date(c.created_at).getTime();
     var lastTs = events.length ? new Date(events[events.length - 1].ts).getTime() : created;
-    var closed = c.stage === "publicado" || c.stage === "cancelado";
+    var closed = isTerminalStage(c.stage);
     var stuck = !closed && (Date.now() - lastTs) > STUCK_MS;
     var attachments = attachmentsForCase(c.id);
 
     var closedNote = "";
-    if (c.stage === "publicado") closedNote = '<p class="hint" style="margin-top:10px;">Publicado el ' + fmtDateTime(events[events.length - 1] ? events[events.length - 1].ts : c.updated_at) + '. Continúa en el Portal Transaccional de la DGCP.</p>';
+    if (c.stage === "publicado") closedNote = '<p class="hint" style="margin-top:10px;">Publicado el ' + fmtDateTime(events[events.length - 1] ? events[events.length - 1].ts : c.updated_at) + '. Continúa en el Portal Transaccional de la DGCP — falta registrar la adjudicación.</p>';
+    if (c.stage === "adjudicado") closedNote = '<p class="hint" style="margin-top:10px;">Adjudicado' + (c.empresa_adjudicada ? " a <strong>" + esc(c.empresa_adjudicada) + "</strong>" : "") + (c.monto_adjudicado != null ? " por RD$ " + fmtMoney(c.monto_adjudicado) : "") + '. Falta registrar la orden de compra.</p>';
+    if (c.stage === "pendiente-pago") closedNote = '<p class="hint" style="margin-top:10px;">Orden de compra' + (c.no_orden_compra ? " <strong>" + esc(c.no_orden_compra) + "</strong>" : "") + ' registrada. Pendiente de pago.</p>';
+    if (c.stage === "desierto") closedNote = '<p class="hint" style="margin-top:10px;">Proceso declarado desierto (sin ofertas válidas).</p>';
+    if (c.stage === "cerrado") closedNote = '<p class="hint" style="margin-top:10px;">Proceso cerrado — orden de compra pagada.</p>';
     if (c.stage === "cancelado") closedNote = '<p class="hint" style="margin-top:10px;">Proceso cancelado.</p>';
 
     return '<article class="case-card" data-stage="' + esc(c.stage) + '" data-id="' + esc(c.id) + '" data-created="' + esc(c.created_at) + '" data-closed="' + (closed ? "1" : "0") + '">' +
@@ -955,7 +993,7 @@
   }
 
   function actionPanelHTML(c) {
-    if (c.stage === "publicado" || c.stage === "cancelado") return "";
+    if (isTerminalStage(c.stage)) return "";
     var caseId = c.id, who = "", body = "";
 
     if (c.stage === "secretaria") {
@@ -998,10 +1036,73 @@
       var pubChecks = [{ key: "publicacion:listo_publicar", label: "El proceso está listo para publicarse (documentación completa)" }];
       body = checklistHTML(caseId, pubChecks) +
         '<div class="action-buttons">' + actorBtn("to-publicado", "Marcar como publicado", "gerente", c.gerente_id, false, "", caseId, pubChecks.map(function (i) { return i.key; })) + "</div>";
+    } else if (c.stage === "publicado") {
+      who = whoLine("gerente", c.gerente_id, false);
+      body = '<div class="action-row"><div class="field"><label>Empresa adjudicada</label><input type="text" class="f-empresa-adjudicada" value="' + esc(c.empresa_adjudicada || "") + '" placeholder="Nombre de la empresa"></div>' +
+        '<div class="field"><label>Monto adjudicado (RD$)</label><input type="number" step="0.01" min="0" class="f-monto-adjudicado" value="' + (c.monto_adjudicado != null ? c.monto_adjudicado : "") + '"></div></div>' +
+        '<div class="action-row"><div class="field"><label>Fecha de adjudicación</label><input type="date" class="f-fecha-adjudicacion" value="' + esc(c.fecha_adjudicacion || "") + '"></div></div>' +
+        '<div class="action-buttons">' +
+        actorBtn("to-adjudicado", "Registrar adjudicación", "gerente", c.gerente_id, false, "", caseId) +
+        actorBtn("to-desierto", "Declarar desierto", "gerente", c.gerente_id, false, "ghost", caseId) +
+        "</div>";
+    } else if (c.stage === "adjudicado") {
+      who = whoLine("gerente", c.gerente_id, false);
+      body = '<div class="action-row"><div class="field"><label>No. de orden de compra</label><input type="text" class="f-no-orden-compra" value="' + esc(c.no_orden_compra || "") + '"></div>' +
+        '<div class="field"><label>Fecha de la orden</label><input type="date" class="f-fecha-orden" value="' + esc(c.fecha_orden || "") + '"></div></div>' +
+        '<div class="action-buttons">' + actorBtn("to-pendiente-pago", "Registrar orden y enviar a pago", "gerente", c.gerente_id, false, "", caseId) + "</div>";
+    } else if (c.stage === "pendiente-pago") {
+      who = whoLine("gerente", c.gerente_id, false);
+      body = '<div class="action-buttons">' + actorBtn("to-cerrado", "Marcar como pagado y cerrar", "gerente", c.gerente_id, false, "", caseId) + "</div>";
     }
 
     var cancelBtn = actorBtn("cancelar", "Cancelar proceso", "gerente", null, false, "ghost");
-    return '<div class="action-box">' + who + body + '<div class="action-buttons" style="margin-top:8px;">' + cancelBtn + "</div></div>";
+    var owner = currentStageActor(c);
+    return '<div class="action-box">' + who + body +
+      (owner ? datosAdminHTML(c, owner.role, owner.assignedId, owner.matchArea) : "") +
+      '<div class="action-buttons" style="margin-top:8px;">' + cancelBtn + "</div></div>";
+  }
+
+  // A quién le corresponde actuar en la etapa actual de un proceso — el
+  // mismo (rol, id-asignado, coincide-por-área) que ya se le pasa a whoLine/
+  // actorBtn en cada rama de arriba. Se reutiliza para el botón de guardar
+  // los "datos administrativos", que también solo puede tocar quien "tiene
+  // la pelota" en esa etapa (misma regla que aplica el servidor).
+  function currentStageActor(c) {
+    var meta = STAGES[c.stage];
+    if (!meta || !meta.role) return null;
+    var role = meta.role;
+    if (role === "secretaria") return { role: role, assignedId: c.secretaria_id, matchArea: false };
+    if (role === "gerente") return { role: role, assignedId: c.gerente_id, matchArea: false };
+    if (role === "coordinador") return { role: role, assignedId: c.coordinador_id, matchArea: false };
+    if (role === "analista") return { role: role, assignedId: c.analista_id, matchArea: false };
+    if (role === "area") return { role: role, assignedId: c.area_id, matchArea: true };
+    if (role === "juridico") return { role: role, assignedId: null, matchArea: false };
+    return { role: role, assignedId: null, matchArea: false };
+  }
+
+  // Campos administrativos adicionales (los mismos del Excel de seguimiento
+  // de Compras Menores que este software reemplaza) — visibles y editables
+  // dentro del recuadro de acción, para quien ya "tiene la pelota" en la
+  // etapa actual del proceso (misma persona que puede actuar arriba).
+  function datosAdminHTML(c, role, assignedId, matchArea) {
+    var modalidadOpts = '<option value=""' + (!c.modalidad ? " selected" : "") + '>— Sin especificar —</option>' +
+      MODALIDADES.map(function (m) { return optHtmlSel(m, m, m === c.modalidad); }).join("");
+    return '<details class="datos-admin" style="margin-top:12px; border-top:1px solid var(--line); padding-top:10px;"><summary style="cursor:pointer; font-size:13px; color:var(--ink-soft);">Datos administrativos del proceso</summary>' +
+      '<div class="action-row" style="margin-top:8px;">' +
+      '<div class="field"><label>Modalidad de proceso</label><select class="da-modalidad">' + modalidadOpts + "</select></div>" +
+      '<div class="field"><label>Referencia del proceso</label><input type="text" class="da-referencia" value="' + esc(c.referencia || "") + '" placeholder="Ej. ETED-DAF-CM-2026-0076"></div>' +
+      "</div>" +
+      '<div class="action-row">' +
+      '<div class="field"><label>No. de comunicación</label><input type="text" class="da-no-comunicacion" value="' + esc(c.no_comunicacion || "") + '"></div>' +
+      '<div class="field"><label>No. de solicitud de pedido</label><input type="text" class="da-no-solicitud" value="' + esc(c.no_solicitud_pedido || "") + '"></div>' +
+      "</div>" +
+      '<div class="action-row">' +
+      '<div class="field"><label>Monto presupuestado (RD$)</label><input type="number" step="0.01" min="0" class="da-monto-presupuestado" value="' + (c.monto_presupuestado != null ? c.monto_presupuestado : "") + '"></div>' +
+      '<div class="field"><label>¿Proceso del PACC?</label><select class="da-pacc"><option value="0"' + (!c.proceso_pacc ? " selected" : "") + '>No</option><option value="1"' + (c.proceso_pacc ? " selected" : "") + '>Sí</option></select></div>' +
+      "</div>" +
+      '<div class="action-row"><div class="field" style="flex:1 1 100%;"><label>Observaciones</label><input type="text" class="da-observaciones" value="' + esc(c.observaciones || "") + '"></div></div>' +
+      '<div class="action-buttons">' + actorBtn("save-datos-admin", "Guardar datos administrativos", role, assignedId, matchArea, "ghost small") + "</div>" +
+      "</details>";
   }
 
   function attachBlockHTML(c, attachments) {
@@ -1155,16 +1256,57 @@
       } else if (do_ === "to-analista") {
         if (!target) { await showAlert("Selecciona un analista."); btn.disabled = false; return; }
         var analP = profileById(target);
-        await transition(c, "analista", { actor: actorName, roleLabel: roleLabelForEvent, action: "asignó analista: " + (analP ? analP.full_name : ""), setFields: { analista_id: target }, notify: analP, subject: "Proceso asignado como analista", body: actorName + " te asignó como analista del proceso." });
+        await transition(c, "analista", { actor: actorName, roleLabel: roleLabelForEvent, action: "asignó analista: " + (analP ? analP.full_name : ""), setFields: { analista_id: target, fecha_asignacion_analista: new Date().toISOString().slice(0, 10) }, notify: analP, subject: "Proceso asignado como analista", body: actorName + " te asignó como analista del proceso." });
       } else if (do_ === "to-juridico") {
         var label = c.stage === "correccion" ? "reenvió el pliego corregido a Consultoría Jurídica" : "elaboró el pliego y lo remitió a Consultoría Jurídica";
         await transition(c, "juridico", { actor: actorName, roleLabel: roleLabelForEvent, action: label, note: note });
       } else if (do_ === "to-analista-post-area") {
-        await transition(c, "analista", { actor: actorName, roleLabel: roleLabelForEvent, action: "corrigió la solicitud y la reenvió al Analista" });
+        await transition(c, "analista", { actor: actorName, roleLabel: roleLabelForEvent, action: "corrigió la solicitud y la reenvió al Analista", setFields: { fecha_entrada_corregido: new Date().toISOString().slice(0, 10) } });
       } else if (do_ === "to-publicacion") {
         await transition(c, "publicacion", { actor: actorName, roleLabel: roleLabelForEvent, action: "aprobó el pliego y dio visto bueno" });
       } else if (do_ === "to-publicado") {
-        await transition(c, "publicado", { actor: actorName, roleLabel: roleLabelForEvent, action: "publicó el proceso" });
+        await transition(c, "publicado", { actor: actorName, roleLabel: roleLabelForEvent, action: "publicó el proceso", setFields: { fecha_publicacion: new Date().toISOString().slice(0, 10) } });
+      } else if (do_ === "to-adjudicado") {
+        var empresaInput = actionBox.querySelector(".f-empresa-adjudicada");
+        var montoAdjInput = actionBox.querySelector(".f-monto-adjudicado");
+        var fechaAdjInput = actionBox.querySelector(".f-fecha-adjudicacion");
+        var empresa = empresaInput ? empresaInput.value.trim() : "";
+        if (!empresa) { await showAlert("Escribe el nombre de la empresa adjudicada."); btn.disabled = false; return; }
+        var montoAdj = montoAdjInput && montoAdjInput.value !== "" ? Number(montoAdjInput.value) : null;
+        await transition(c, "adjudicado", {
+          actor: actorName, roleLabel: roleLabelForEvent,
+          action: "registró la adjudicación a " + empresa + (montoAdj != null ? " por RD$ " + fmtMoney(montoAdj) : ""),
+          setFields: { empresa_adjudicada: empresa, monto_adjudicado: montoAdj, fecha_adjudicacion: (fechaAdjInput && fechaAdjInput.value) || null }
+        });
+      } else if (do_ === "to-desierto") {
+        if (!(await showConfirm("¿Declarar este proceso desierto (sin ofertas válidas)?"))) { btn.disabled = false; return; }
+        await transition(c, "desierto", { actor: actorName, roleLabel: roleLabelForEvent, action: "declaró el proceso desierto" });
+      } else if (do_ === "to-pendiente-pago") {
+        var ordenInput = actionBox.querySelector(".f-no-orden-compra");
+        var fechaOrdenInput = actionBox.querySelector(".f-fecha-orden");
+        var orden = ordenInput ? ordenInput.value.trim() : "";
+        if (!orden) { await showAlert("Escribe el número de orden de compra."); btn.disabled = false; return; }
+        await transition(c, "pendiente-pago", {
+          actor: actorName, roleLabel: roleLabelForEvent,
+          action: "registró la orden de compra " + orden + " y la envió a pago",
+          setFields: { no_orden_compra: orden, fecha_orden: (fechaOrdenInput && fechaOrdenInput.value) || null }
+        });
+      } else if (do_ === "to-cerrado") {
+        await transition(c, "cerrado", { actor: actorName, roleLabel: roleLabelForEvent, action: "marcó el proceso como pagado y lo cerró" });
+      } else if (do_ === "save-datos-admin") {
+        var datosBox = actionBox.querySelector(".datos-admin");
+        var montoPresInput = datosBox.querySelector(".da-monto-presupuestado");
+        var datosFields = {
+          modalidad: datosBox.querySelector(".da-modalidad").value,
+          referencia: datosBox.querySelector(".da-referencia").value.trim(),
+          no_comunicacion: datosBox.querySelector(".da-no-comunicacion").value.trim(),
+          no_solicitud_pedido: datosBox.querySelector(".da-no-solicitud").value.trim(),
+          proceso_pacc: datosBox.querySelector(".da-pacc").value === "1",
+          monto_presupuestado: montoPresInput.value !== "" ? Number(montoPresInput.value) : null,
+          observaciones: datosBox.querySelector(".da-observaciones").value.trim()
+        };
+        await DB.updateCase(c.id, datosFields);
+        showToast("Datos administrativos guardados", "");
       } else if (do_ === "cancelar") {
         if (!(await showConfirm("¿Cancelar este proceso?"))) { btn.disabled = false; return; }
         await transition(c, "cancelado", { actor: actorName, roleLabel: roleLabelForEvent, action: "canceló el proceso" });
@@ -1184,6 +1326,7 @@
         if (targetRole === "area") {
           targetLabel = "el área requirente (" + areaName(c.area_id) + ")";
           notifyBody = actorName + " devolvió el proceso al área requirente. Motivo: " + devolverNote;
+          setFields.fecha_salida_correccion = new Date().toISOString().slice(0, 10);
         } else {
           var fieldName = DEVOLVER_FIELD_FOR_ROLE[targetRole];
           setFields[fieldName] = targetId;
@@ -1228,13 +1371,17 @@
   function renderPanorama(box) {
     var stats = computeStats();
     box.innerHTML =
-      '<div class="page-head-actions" style="margin-bottom:16px;"><button type="button" class="btn secondary small" id="export-csv-btn">⬇ Descargar historial (CSV)</button></div>' +
+      '<div class="page-head-actions" style="margin-bottom:16px; display:flex; gap:8px; flex-wrap:wrap;">' +
+      '<button type="button" class="btn secondary small" id="export-cases-csv-btn">⬇ Descargar procesos (CSV)</button>' +
+      '<button type="button" class="btn secondary small" id="export-csv-btn">⬇ Descargar historial de eventos (CSV)</button>' +
+      "</div>" +
       '<div class="chart-grid">' +
       '<div class="card"><div class="card-title">Tiempo promedio por etapa</div><div class="card-pad">' + renderBars(stats.stageAverages) + "</div></div>" +
       '<div class="card"><div class="card-title">Tiempo total promedio por área (publicados)</div><div class="card-pad">' + renderBars(stats.areaAverages) + "</div></div>" +
       "</div>" +
       '<div class="card" style="margin-top:16px;"><div class="card-title">Procesos por área requirente</div><div class="card-pad">' + renderAreaSummaryTable(stats.areaSummary) + "</div></div>";
     $("#export-csv-btn").addEventListener("click", exportHistoryCSV);
+    $("#export-cases-csv-btn").addEventListener("click", exportCasesCSV);
   }
   function renderBars(list) {
     if (!list.length) return '<p class="chart-empty">Todavía no hay suficiente historial para calcular esto.</p>';
@@ -1251,6 +1398,15 @@
       }).join("") + "</tbody></table></div>";
   }
   function csvEscape(v) { var s = String(v == null ? "" : v); return /["\n,]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  function downloadCSV(rows, filenamePrefix) {
+    var csv = "﻿" + rows.map(function (r) { return r.map(csvEscape).join(","); }).join("\r\n");
+    var blob = new Blob([csv], { type: "text/csv" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = filenamePrefix + "-" + new Date().toISOString().slice(0, 10) + ".csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
   function exportHistoryCSV() {
     var rows = [["Núm. de proceso", "Proceso", "Tipo", "Área", "Etapa alcanzada", "Actor", "Puesto", "Acción", "Nota", "Fecha y hora", "Duración en la etapa anterior"]];
     state.cases.forEach(function (c) {
@@ -1259,13 +1415,34 @@
       });
     });
     if (rows.length <= 1) { showAlert("Todavía no hay historial registrado para exportar."); return; }
-    var csv = "﻿" + rows.map(function (r) { return r.map(csvEscape).join(","); }).join("\r\n");
-    var blob = new Blob([csv], { type: "text/csv" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url; a.download = "bitacora-licitaciones-" + new Date().toISOString().slice(0, 10) + ".csv";
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    downloadCSV(rows, "procomly-historial");
+  }
+  // Un renglón por proceso, con las mismas columnas que el Excel de
+  // seguimiento de Compras Menores que este software reemplaza — pensado
+  // para poder abrirlo directamente en lugar del reporte manual.
+  function exportCasesCSV() {
+    if (!state.cases.length) { showAlert("Todavía no hay procesos registrados para exportar."); return; }
+    var rows = [[
+      "No.", "Año", "Fecha entrada", "Analista asignado", "Fecha de asignación", "Área solicitante",
+      "No. comunicación", "No. solicitud de pedido", "Tipo de proceso", "Fecha de salida por corrección",
+      "Fecha de entrada corregido", "Modalidad de proceso", "Referencia del proceso", "Descripción del bien/servicio",
+      "Proceso del PACC", "Fecha de publicación", "Fecha de adjudicación", "Monto presupuestado (RD$)",
+      "Empresa adjudicada", "Monto adjudicado (RD$)", "No. orden de compra", "Fecha orden", "Estatus del proceso", "Observaciones"
+    ]];
+    state.cases.slice().sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); }).forEach(function (c) {
+      var analista = profileById(c.analista_id);
+      rows.push([
+        caseDisplayNumber(c), new Date(c.created_at).getFullYear(), fmtDateTime(c.created_at).split(",")[0],
+        analista ? (analista.full_name || analista.email) : "", c.fecha_asignacion_analista || "", areaName(c.area_id),
+        c.no_comunicacion || "", c.no_solicitud_pedido || "", c.tipo === "licitacion" ? "Licitación" : "Compra menor",
+        c.fecha_salida_correccion || "", c.fecha_entrada_corregido || "", c.modalidad || "", c.referencia || "",
+        c.title, c.proceso_pacc ? "SI" : "NO", c.fecha_publicacion || "", c.fecha_adjudicacion || "",
+        c.monto_presupuestado != null ? c.monto_presupuestado : "", c.empresa_adjudicada || "",
+        c.monto_adjudicado != null ? c.monto_adjudicado : "", c.no_orden_compra || "", c.fecha_orden || "",
+        (STAGES[c.stage] || {}).label || c.stage, c.observaciones || ""
+      ]);
+    });
+    downloadCSV(rows, "procomly-procesos");
   }
 
   // =================================================== Áreas y usuarios
