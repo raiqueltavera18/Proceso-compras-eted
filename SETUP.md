@@ -332,6 +332,7 @@ alter table public.cases
   add column if not exists fecha_salida_correccion      date,
   add column if not exists fecha_entrada_corregido      date,
   add column if not exists estatus_legado               text not null default '',
+  add column if not exists analista_legado               text not null default '',
   add column if not exists observaciones                text not null default '';
 
 alter table public.cases drop constraint if exists cases_stage_check;

@@ -110,6 +110,7 @@ create table public.cases (
   fecha_salida_correccion   date,
   fecha_entrada_corregido   date,
   estatus_legado            text not null default '',   -- estatus textual original, solo para procesos importados del Excel
+  analista_legado           text not null default '',   -- nombre del analista tal como aparecía en el Excel, para procesos importados sin cuenta real todavía
   observaciones             text not null default '',
 
   created_at      timestamptz not null default now(),

@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs / temporales
+*.log
+.tmp/
+
+# Archivos de prueba local (mock de Supabase) — no forman parte del sitio
+mock-supabase.js
+test-seed.js
+test-config.js
+test-index.html

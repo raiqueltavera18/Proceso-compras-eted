@@ -845,6 +845,11 @@
       "</div></div>" +
       '<div class="field"><label>Monto presupuestado (RD$, opcional)</label><input type="number" step="0.01" min="0" class="f-monto-presupuestado" placeholder="Ej. 2000000"></div>' +
       "</div>" +
+      '<div class="form-grid">' +
+      '<div class="field"><label>Modalidad de proceso (opcional)</label><select class="f-modalidad"><option value="">— Sin especificar —</option>' +
+      MODALIDADES.map(function (m) { return optHtml(m, m); }).join("") + "</select></div>" +
+      '<div class="field" style="max-width:200px;"><label>¿Es del PACC?</label><select class="f-pacc"><option value="0">No</option><option value="1">Sí</option></select></div>' +
+      "</div>" +
       '<div class="attach-block" style="border-top:none; padding-top:0; margin-top:0;">' +
       '<p class="attach-title">Archivos adjuntos (opcional)</p>' +
       '<ul class="attach-list f-staged-list"></ul>' +
@@ -890,12 +895,15 @@
       }
       var tipo = form.querySelector('input[name="f-tipo"]:checked').value;
       var montoPresupuestadoVal = $(".f-monto-presupuestado", form).value;
+      var modalidadVal = $(".f-modalidad", form).value;
+      var paccVal = $(".f-pacc", form).value === "1";
       var submitBtn = form.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       try {
         var secretarias = profilesByRole("secretaria");
-        var caseFields = { title: title, tipo: tipo, area_id: areaId, solicitante: solicitante, stage: "secretaria" };
+        var caseFields = { title: title, tipo: tipo, area_id: areaId, solicitante: solicitante, stage: "secretaria", proceso_pacc: paccVal };
         if (montoPresupuestadoVal !== "") caseFields.monto_presupuestado = Number(montoPresupuestadoVal);
+        if (modalidadVal) caseFields.modalidad = modalidadVal;
         if (secretarias.length === 1) caseFields.secretaria_id = secretarias[0].id;
         var created = await DB.createCase(caseFields);
         await DB.insertEvent({ case_id: created.id, stage_held: "secretaria", actor_id: state.me.id, actor_name: solicitante, role_label: areaName(areaId), action: "registró la solicitud de compra", duration_ms: 0 });
@@ -969,7 +977,7 @@
       '<span class="pill pill-stage">' + esc(meta.label) + "</span>" +
       (c.rework_count ? '<span class="pill pill-warn">' + c.rework_count + " devolución(es)</span>" : "") +
       "</div>" +
-      '<div class="case-area">' + esc(areaName(c.area_id)) + "</div>" +
+      '<div class="case-area">' + esc(areaName(c.area_id)) + (!c.analista_id && c.analista_legado ? " · Analista (histórico): " + esc(c.analista_legado) : "") + "</div>" +
       "</div></div>" +
       '<div class="case-timers">' +
       '<div class="timer' + (stuck ? " stuck" : "") + ' js-timer-stage" data-since="' + lastTs + '" data-closed="' + (closed ? "1" : "0") + '"><span class="num">…</span> en etapa actual</div>' +
@@ -1431,9 +1439,10 @@
     ]];
     state.cases.slice().sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); }).forEach(function (c) {
       var analista = profileById(c.analista_id);
+      var analistaLabel = analista ? (analista.full_name || analista.email) : (c.analista_legado || "");
       rows.push([
         caseDisplayNumber(c), new Date(c.created_at).getFullYear(), fmtDateTime(c.created_at).split(",")[0],
-        analista ? (analista.full_name || analista.email) : "", c.fecha_asignacion_analista || "", areaName(c.area_id),
+        analistaLabel, c.fecha_asignacion_analista || "", areaName(c.area_id),
         c.no_comunicacion || "", c.no_solicitud_pedido || "", c.tipo === "licitacion" ? "Licitación" : "Compra menor",
         c.fecha_salida_correccion || "", c.fecha_entrada_corregido || "", c.modalidad || "", c.referencia || "",
         c.title, c.proceso_pacc ? "SI" : "NO", c.fecha_publicacion || "", c.fecha_adjudicacion || "",
