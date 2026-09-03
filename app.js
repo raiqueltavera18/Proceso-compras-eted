@@ -185,6 +185,15 @@
     sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   }
 
+  function newUuid() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    // repuesto para navegadores muy viejos sin crypto.randomUUID
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0, v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
   // ============================================================ DB layer ==
   // Única capa que habla con Supabase — así toda la lógica de arriba (UI,
   // reglas de negocio) no depende de los detalles de la librería.
@@ -256,7 +265,18 @@
     },
 
     async createCase(fields) {
-      var r = await sb.from("cases").insert(fields).select().single();
+      // No usamos .select().single() encadenado al insert: Postgres revisa la
+      // política de "ver" (no solo la de "crear") para poder devolver la fila
+      // en el mismo INSERT ... RETURNING, y esa revisión puede fallar sobre una
+      // fila que se acaba de crear en la misma operación (aunque la política
+      // de "ver" sea correcta y funcione bien para filas ya existentes). Por
+      // eso creamos primero con un id generado en el navegador, y lo buscamos
+      // en una segunda consulta separada — eso sí funciona siempre.
+      var id = fields.id || newUuid();
+      var payload = Object.assign({}, fields, { id: id });
+      var insertRes = await sb.from("cases").insert(payload);
+      if (insertRes.error) throw insertRes.error;
+      var r = await sb.from("cases").select().eq("id", id).single();
       if (r.error) throw r.error;
       return r.data;
     },
