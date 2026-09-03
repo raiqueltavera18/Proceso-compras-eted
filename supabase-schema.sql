@@ -427,6 +427,78 @@ create policy "cases_update_stage_owner"
   )
   with check (true);  -- el destino válido de cada transición lo controla la aplicación
 
+-- Editar los datos básicos de una solicitud ya creada (descripción, tipo,
+-- área requirente, solicitado por). A diferencia de "cases_update_stage_owner"
+-- de arriba, esto NO depende de la etapa actual — el Coordinador y el
+-- Analista pueden corregirlos mientras el proceso los tenga asignados
+-- (en cualquier etapa en la que esté en ese momento), y el Gerente puede
+-- hacerlo en cualquier proceso. Por eso se resuelve con una función en vez
+-- de ampliar la política de "update" general — así no se abre la puerta a
+-- que también puedan cambiar otras columnas (etapa, montos, etc.) fuera de
+-- su etapa correspondiente.
+create or replace function public.edit_case_basic_fields(
+  p_case_id uuid,
+  p_title text,
+  p_tipo text,
+  p_area_id uuid,
+  p_solicitante text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c public.cases%rowtype;
+  me public.profiles%rowtype;
+  cambios text := '';
+begin
+  select * into c from public.cases where id = p_case_id;
+  if not found then
+    raise exception 'Proceso no encontrado';
+  end if;
+
+  if not (
+    public.is_admin()
+    or public.has_role('gerente')
+    or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+    or (public.has_role('analista') and c.analista_id = auth.uid())
+  ) then
+    raise exception 'No tienes permiso para editar los datos de este proceso';
+  end if;
+
+  if p_tipo not in ('menor','licitacion') then
+    raise exception 'Tipo de proceso inválido';
+  end if;
+
+  select * into me from public.profiles where id = auth.uid();
+
+  if c.title is distinct from p_title then
+    cambios := cambios || 'descripción: "' || c.title || '" → "' || p_title || '". ';
+  end if;
+  if c.tipo is distinct from p_tipo then
+    cambios := cambios || 'tipo: "' || c.tipo || '" → "' || p_tipo || '". ';
+  end if;
+  if c.area_id is distinct from p_area_id then
+    cambios := cambios || 'área requirente cambiada. ';
+  end if;
+  if c.solicitante is distinct from p_solicitante then
+    cambios := cambios || 'solicitado por: "' || c.solicitante || '" → "' || p_solicitante || '". ';
+  end if;
+
+  update public.cases
+  set title = p_title, tipo = p_tipo, area_id = p_area_id, solicitante = p_solicitante
+  where id = p_case_id;
+
+  if cambios <> '' then
+    insert into public.case_events (case_id, stage_held, actor_id, actor_name, role_label, action, note, duration_ms)
+    values (p_case_id, c.stage, auth.uid(), coalesce(nullif(me.full_name, ''), me.email, ''), 'Edición de solicitud', 'editó los datos de la solicitud', cambios, 0);
+  end if;
+end;
+$$;
+
+grant execute on function public.edit_case_basic_fields(uuid, text, text, uuid, text) to authenticated;
+
 create policy "cases_delete_admin_only"
   on public.cases for delete
   to authenticated

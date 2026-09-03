@@ -408,6 +408,79 @@ Después de correrlo, sube también los archivos `app.js`, `supabase-schema.sql`
 y `SETUP.md` actualizados a tu repositorio de GitHub (reemplazando los que
 ya tenías).
 
+**Ya tenía mi proyecto creado antes de poder editar la solicitud (descripción, tipo, área, solicitante) después de creada — ¿cómo lo actualizo?**
+Si al abrir un proceso no ves la sección "Editar solicitud", corre esto una
+sola vez en el **SQL Editor** de tu proyecto — es seguro, no borra ni
+modifica ningún proceso que ya tengas:
+
+```sql
+create or replace function public.edit_case_basic_fields(
+  p_case_id uuid,
+  p_title text,
+  p_tipo text,
+  p_area_id uuid,
+  p_solicitante text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c public.cases%rowtype;
+  me public.profiles%rowtype;
+  cambios text := '';
+begin
+  select * into c from public.cases where id = p_case_id;
+  if not found then
+    raise exception 'Proceso no encontrado';
+  end if;
+
+  if not (
+    public.is_admin()
+    or public.has_role('gerente')
+    or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+    or (public.has_role('analista') and c.analista_id = auth.uid())
+  ) then
+    raise exception 'No tienes permiso para editar los datos de este proceso';
+  end if;
+
+  if p_tipo not in ('menor','licitacion') then
+    raise exception 'Tipo de proceso inválido';
+  end if;
+
+  select * into me from public.profiles where id = auth.uid();
+
+  if c.title is distinct from p_title then
+    cambios := cambios || 'descripción: "' || c.title || '" → "' || p_title || '". ';
+  end if;
+  if c.tipo is distinct from p_tipo then
+    cambios := cambios || 'tipo: "' || c.tipo || '" → "' || p_tipo || '". ';
+  end if;
+  if c.area_id is distinct from p_area_id then
+    cambios := cambios || 'área requirente cambiada. ';
+  end if;
+  if c.solicitante is distinct from p_solicitante then
+    cambios := cambios || 'solicitado por: "' || c.solicitante || '" → "' || p_solicitante || '". ';
+  end if;
+
+  update public.cases
+  set title = p_title, tipo = p_tipo, area_id = p_area_id, solicitante = p_solicitante
+  where id = p_case_id;
+
+  if cambios <> '' then
+    insert into public.case_events (case_id, stage_held, actor_id, actor_name, role_label, action, note, duration_ms)
+    values (p_case_id, c.stage, auth.uid(), coalesce(nullif(me.full_name, ''), me.email, ''), 'Edición de solicitud', 'editó los datos de la solicitud', cambios, 0);
+  end if;
+end;
+$$;
+
+grant execute on function public.edit_case_basic_fields(uuid, text, text, uuid, text) to authenticated;
+```
+
+Después de correrlo, sube también los archivos `app.js` y `supabase-schema.sql`
+actualizados a tu repositorio de GitHub (reemplazando los que ya tenías).
+
 **Al confirmar mi correo me manda a una página que no carga ("localhost rechazó la conexión")**
 Es normal y no significa que algo falló: tu cuenta ya quedó confirmada en
 Supabase, solo que la página a la que te redirige después de confirmar

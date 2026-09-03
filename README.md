@@ -104,6 +104,15 @@ Excel compartido, ahora dentro de Procomly. En "Panorama de tiempos" se
 puede descargar un CSV con un renglón por proceso y todas estas columnas,
 listo para reemplazar el reporte manual.
 
+Cada tarjeta de proceso también tiene una sección plegable de "Editar
+solicitud" para corregir los datos básicos que se llenaron al registrarla
+(descripción, tipo de proceso, área requirente, solicitado por) si se
+detecta un error después de creada — en cualquier etapa, incluso si el
+proceso ya está cerrado. Solo puede usarla el Coordinador o el Analista
+mientras tengan el proceso asignado, el Gerente de Compras en cualquier
+proceso, o la administradora; cada corrección queda registrada en el
+historial del proceso.
+
 Quién puede actuar en cada etapa depende del **puesto** que la
 administradora le haya asignado a cada persona (ver `SETUP.md`) — no de
 quién dice ser dentro de la página. Una administradora puede, si hace falta,

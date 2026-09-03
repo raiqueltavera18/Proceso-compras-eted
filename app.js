@@ -284,6 +284,12 @@
       var r = await sb.from("cases").update(fields).eq("id", id);
       if (r.error) throw r.error;
     },
+    async editCaseBasicFields(id, fields) {
+      var r = await sb.rpc("edit_case_basic_fields", {
+        p_case_id: id, p_title: fields.title, p_tipo: fields.tipo, p_area_id: fields.area_id, p_solicitante: fields.solicitante
+      });
+      if (r.error) throw r.error;
+    },
 
     async insertEvent(fields) {
       var r = await sb.from("case_events").insert(fields).select().single();
@@ -1015,6 +1021,7 @@
       '<div class="timer js-timer-total" data-since="' + created + '" data-until="' + (closed ? lastTs : "") + '"><span class="num">…</span> transcurridas en total</div>' +
       "</div>" +
       actionPanelHTML(c) +
+      editSolicitudHTML(c) +
       attachBlockHTML(c, attachments) +
       closedNote +
       timelineHTML(events) +
@@ -1099,6 +1106,42 @@
     return '<div class="action-box">' + who + body +
       (owner ? datosAdminHTML(c, owner.role, owner.assignedId, owner.matchArea) : "") +
       '<div class="action-buttons" style="margin-top:8px;">' + cancelBtn + "</div></div>";
+  }
+
+  // A quién le corresponde poder corregir los datos básicos de la solicitud
+  // (descripción, tipo, área requirente, solicitado por) — a diferencia de
+  // "currentStageActor" de arriba, esto NO depende de la etapa actual: el
+  // Coordinador y el Analista pueden hacerlo mientras el proceso los tenga
+  // asignados (en cualquier etapa en la que esté), y el Gerente en
+  // cualquier proceso. Se reutiliza la misma pieza (role, assignedId) que
+  // ya entiende actorBtn/canAct/whoLine, eligiendo cuál de los tres le
+  // corresponde a quien tiene la sesión abierta.
+  function editSolicitudActorFor(c) {
+    if (myRoles().indexOf("coordinador") !== -1 && c.coordinador_id && c.coordinador_id === (state.me && state.me.id)) {
+      return { role: "coordinador", assignedId: c.coordinador_id, matchArea: false };
+    }
+    if (myRoles().indexOf("analista") !== -1 && c.analista_id && c.analista_id === (state.me && state.me.id)) {
+      return { role: "analista", assignedId: c.analista_id, matchArea: false };
+    }
+    return { role: "gerente", assignedId: null, matchArea: false };
+  }
+
+  function editSolicitudHTML(c) {
+    var actor = editSolicitudActorFor(c);
+    var areaOpts = state.areas.map(function (a) { return optHtmlSel(a.id, a.name, a.id === c.area_id); }).join("");
+    return '<details class="edit-solicitud" style="margin-top:12px; border-top:1px solid var(--line); padding-top:10px;"><summary style="cursor:pointer; font-size:13px; color:var(--ink-soft);">Editar solicitud</summary>' +
+      '<div style="margin-top:8px;">' + whoLine(actor.role, actor.assignedId, actor.matchArea) +
+      '<div class="action-row"><div class="field" style="flex:1 1 100%;"><label>Descripción de lo que se va a comprar</label><input type="text" class="es-title" value="' + esc(c.title) + '"></div></div>' +
+      '<div class="action-row">' +
+      '<div class="field" style="max-width:280px;"><label>Tipo de proceso</label><div class="radio-row">' +
+      '<label><input type="radio" name="es-tipo-' + esc(c.id) + '" class="es-tipo" value="menor"' + (c.tipo !== "licitacion" ? " checked" : "") + '> Compra menor</label>' +
+      '<label><input type="radio" name="es-tipo-' + esc(c.id) + '" class="es-tipo" value="licitacion"' + (c.tipo === "licitacion" ? " checked" : "") + '> Licitación</label>' +
+      "</div></div>" +
+      '<div class="field"><label>Área requirente</label><select class="es-area">' + areaOpts + "</select></div>" +
+      "</div>" +
+      '<div class="action-row"><div class="field" style="flex:1 1 100%;"><label>Solicitado por</label><input type="text" class="es-solicitante" value="' + esc(c.solicitante || "") + '"></div></div>' +
+      '<div class="action-buttons">' + actorBtn("save-edit-solicitud", "Guardar cambios", actor.role, actor.assignedId, actor.matchArea, "ghost small") + "</div>" +
+      "</div></details>";
   }
 
   // A quién le corresponde actuar en la etapa actual de un proceso — el
@@ -1278,8 +1321,8 @@
     var actorId = state.me.id, actorName = state.me.full_name || state.me.email;
     var roleLabelForEvent = isAdmin() && !meMatchesRole(role, assigned, matchArea) ? "Administrador" : (ROLE_LABELS[role] || role);
     var actionBox = caseEl.querySelector(".action-box");
-    var targetSel = actionBox.querySelector(".target-select");
-    var noteInput = actionBox.querySelector(".note-input");
+    var targetSel = actionBox ? actionBox.querySelector(".target-select") : null;
+    var noteInput = actionBox ? actionBox.querySelector(".note-input") : null;
     var target = targetSel ? targetSel.value : "";
     var note = noteInput ? noteInput.value.trim() : "";
     var do_ = btn.getAttribute("data-do");
@@ -1346,6 +1389,17 @@
         };
         await DB.updateCase(c.id, datosFields);
         showToast("Datos administrativos guardados", "");
+      } else if (do_ === "save-edit-solicitud") {
+        var editBox = caseEl.querySelector(".edit-solicitud");
+        var editFields = {
+          title: editBox.querySelector(".es-title").value.trim(),
+          tipo: editBox.querySelector('input.es-tipo:checked').value,
+          area_id: editBox.querySelector(".es-area").value,
+          solicitante: editBox.querySelector(".es-solicitante").value.trim()
+        };
+        if (!editFields.title) { await showAlert("La descripción no puede quedar vacía."); btn.disabled = false; return; }
+        await DB.editCaseBasicFields(c.id, editFields);
+        showToast("Solicitud actualizada", "");
       } else if (do_ === "cancelar") {
         if (!(await showConfirm("¿Cancelar este proceso?"))) { btn.disabled = false; return; }
         await transition(c, "cancelado", { actor: actorName, roleLabel: roleLabelForEvent, action: "canceló el proceso" });
