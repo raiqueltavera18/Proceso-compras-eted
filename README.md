@@ -113,6 +113,26 @@ mientras tengan el proceso asignado, el Gerente de Compras en cualquier
 proceso, o la administradora; cada corrección queda registrada en el
 historial del proceso.
 
+Cualquier persona puede crear su propia cuenta desde la pantalla de
+inicio, pero queda sin ningún puesto asignado hasta que la administradora
+se lo asigne desde "Áreas y usuarios" — antes de eso no ve ni puede hacer
+nada. Desde ahí, la administradora también puede **desactivar** la cuenta
+de alguien en cualquier momento: la persona pierde de inmediato todo
+acceso a Procomly, pero conserva su historial en los procesos y puede
+reactivarse cuando haga falta — pensado para cuando alguien deja el
+puesto o se registró por error, sin tener que borrar su cuenta ni su
+rastro.
+
+Existe además un puesto especial, **Observador (solo lectura)**, para dar
+acceso de demostración o revisión sin ningún riesgo: quien lo tenga ve
+absolutamente todo (todos los procesos en cualquier etapa y área, el
+directorio, Áreas y usuarios), pero no puede crear, editar, avanzar ni
+borrar nada — la base de datos rechaza cualquier intento de escritura,
+aunque alguien intentara saltarse la pantalla. Es útil para compartir una
+sola cuenta de demostración entre varias personas que solo necesitan
+revisar el sistema (ver `SETUP.md`, sección "Cuenta de demostración
+compartida").
+
 Quién puede actuar en cada etapa depende del **puesto** que la
 administradora le haya asignado a cada persona (ver `SETUP.md`) — no de
 quién dice ser dentro de la página. Una administradora puede, si hace falta,
@@ -126,6 +146,17 @@ requirente solo ve los procesos de su propia área — el resto de los puestos
 (Secretaría, Gerencia, Jurídico, Administrador) ven todos los procesos,
 porque necesitan seguimiento del flujo completo. La tabla de permisos
 completa está en `SETUP.md`.
+
+## Bandeja de notificaciones
+
+En la parte superior, junto a tu nombre, hay una campanita 🔔 con un contador
+de avisos sin leer. Te avisa automáticamente cada vez que: se te asigna una
+acción dentro de un proceso, cambia algo en un proceso que tú registraste, o
+—si eres Coordinador o Gerente de Compras— cambia algo en un proceso que
+tienes asignado (Coordinación) o en cualquier proceso (Gerencia). Al hacer
+clic en un aviso, te marca ese aviso como leído y te lleva directo a la
+tarjeta del proceso correspondiente. Por ahora esta bandeja vive únicamente
+dentro de la aplicación — ver la sección de abajo sobre correos.
 
 ## Notificaciones por correo — registradas, sin enviar todavía
 

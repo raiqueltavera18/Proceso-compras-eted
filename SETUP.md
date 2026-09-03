@@ -481,6 +481,201 @@ grant execute on function public.edit_case_basic_fields(uuid, text, text, uuid, 
 Después de correrlo, sube también los archivos `app.js` y `supabase-schema.sql`
 actualizados a tu repositorio de GitHub (reemplazando los que ya tenías).
 
+**Ya tenía mi proyecto creado antes de la bandeja de notificaciones (la campanita 🔔) — ¿cómo lo actualizo?**
+Si no ves el ícono de la campanita junto a tu nombre en la parte superior,
+corre esto una sola vez en el **SQL Editor** de tu proyecto — es seguro, no
+borra ni modifica ningún proceso que ya tengas:
+
+```sql
+alter table public.cases
+  add column if not exists created_by uuid references public.profiles (id);
+
+create table if not exists public.notifications (
+  id            uuid primary key default gen_random_uuid(),
+  recipient_id  uuid not null references public.profiles (id) on delete cascade,
+  case_id       uuid references public.cases (id) on delete cascade,
+  kind          text not null default '',
+  title         text not null,
+  body          text not null default '',
+  read          boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+
+alter table public.notifications enable row level security;
+grant select, insert, update, delete on public.notifications to anon, authenticated;
+
+drop policy if exists "notifications_select_own" on public.notifications;
+create policy "notifications_select_own"
+  on public.notifications for select
+  to authenticated
+  using (recipient_id = auth.uid() or public.is_admin());
+
+drop policy if exists "notifications_update_own" on public.notifications;
+create policy "notifications_update_own"
+  on public.notifications for update
+  to authenticated
+  using (recipient_id = auth.uid())
+  with check (recipient_id = auth.uid());
+
+create or replace function public.fanout_case_event_notifications()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c public.cases%rowtype;
+  ger record;
+  already uuid[] := '{}';
+  resumen text;
+begin
+  select * into c from public.cases where id = new.case_id;
+  if not found then return new; end if;
+
+  resumen := trim(coalesce(new.actor_name, '') || ' ' || coalesce(new.action, ''));
+
+  if c.coordinador_id is not null and c.coordinador_id <> new.actor_id then
+    insert into public.notifications (recipient_id, case_id, kind, title, body)
+    values (c.coordinador_id, c.id, 'proceso', c.title, resumen);
+    already := already || c.coordinador_id;
+  end if;
+
+  if c.analista_id is not null and c.analista_id <> new.actor_id and not (c.analista_id = any(already)) then
+    insert into public.notifications (recipient_id, case_id, kind, title, body)
+    values (c.analista_id, c.id, 'proceso', c.title, resumen);
+    already := already || c.analista_id;
+  end if;
+
+  if c.created_by is not null and c.created_by <> new.actor_id and not (c.created_by = any(already)) then
+    insert into public.notifications (recipient_id, case_id, kind, title, body)
+    values (c.created_by, c.id, 'proceso', c.title, resumen);
+    already := already || c.created_by;
+  end if;
+
+  for ger in select id from public.profiles where 'gerente' = any(roles) and active loop
+    if ger.id <> new.actor_id and not (ger.id = any(already)) then
+      insert into public.notifications (recipient_id, case_id, kind, title, body)
+      values (ger.id, c.id, 'proceso', c.title, resumen);
+      already := already || ger.id;
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists case_events_notify on public.case_events;
+create trigger case_events_notify
+  after insert on public.case_events
+  for each row execute procedure public.fanout_case_event_notifications();
+```
+
+Después de correrlo, sube también los archivos `app.js`, `styles.css` y
+`supabase-schema.sql` actualizados a tu repositorio de GitHub (reemplazando
+los que ya tenías). La campanita te avisará, de ahora en adelante, cada vez
+que se te asigne una acción en un proceso, cuando cambie algo en un proceso
+que tú registraste, o (si eres Gerente de Compras) cualquier cambio en
+cualquier proceso — todavía **solo dentro de la aplicación**, no por
+correo.
+
+**Ya tenía mi proyecto creado antes de poder desactivar cuentas — ¿cómo lo actualizo?**
+Si en el Directorio de usuarios ("Áreas y usuarios") no ves el botón
+"Desactivar" junto a cada persona, corre esto una sola vez en el **SQL
+Editor** de tu proyecto — es seguro, no borra ni modifica ningún proceso ni
+ninguna cuenta que ya tengas:
+
+```sql
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce((select is_admin from public.profiles where id = auth.uid() and active), false);
+$$;
+
+create or replace function public.has_role(check_role text)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(
+    (select check_role = any(roles) from public.profiles where id = auth.uid() and active),
+    false
+  );
+$$;
+```
+
+Después de correrlo, sube también el archivo `app.js` actualizado a tu
+repositorio de GitHub. Desde ese momento, cuando le des a "Desactivar" a
+alguien desde el Directorio de usuarios, esa persona pierde de inmediato
+todo acceso a Procomly (no ve ni puede hacer nada, aunque conserve su
+puesto guardado) — a diferencia de borrar su cuenta desde el panel de
+Supabase, esto no toca su historial en los procesos ni su acceso de inicio
+de sesión, y puedes reactivarla en cualquier momento con el mismo botón.
+
+**Ya tenía mi proyecto creado antes del puesto "Observador (solo lectura)" — ¿cómo lo actualizo?**
+Si al editar el perfil de alguien no ves la opción "Observador (solo
+lectura)" entre los puestos, corre esto una sola vez en el **SQL Editor**
+de tu proyecto — es seguro, no borra ni modifica ningún proceso ni ninguna
+cuenta que ya tengas:
+
+```sql
+create or replace function public.can_view_case(target_case_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.cases c
+    where c.id = target_case_id
+      and (
+        public.is_admin()
+        or public.has_role('secretaria')
+        or public.has_role('gerente')
+        or public.has_role('juridico')
+        or public.has_role('observador')
+        or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+        or (public.has_role('analista') and c.analista_id = auth.uid())
+        or (public.has_role('area') and c.area_id = public.my_area_id())
+      )
+  );
+$$;
+```
+
+Después de correrlo, sube también el archivo `app.js` actualizado a tu
+repositorio de GitHub. El puesto "Observador" es para dar acceso de
+demostración o revisión sin riesgo: quien lo tenga ve absolutamente todo
+(todos los procesos en cualquier etapa y área, el directorio, Áreas y
+usuarios), pero no puede crear, editar, avanzar ni borrar nada — todos los
+botones de acción le quedan bloqueados, y la base de datos rechaza
+cualquier intento de todas formas aunque alguien intentara saltarse la
+pantalla.
+
+**Cuenta de demostración compartida (un solo correo para varios probadores)**
+Para que varias personas revisen Procomly sin tener que invitar a cada una
+por separado ni arriesgar los datos reales de ETED:
+
+1. Ve a "Áreas y usuarios" → "Invitar persona", escribe un correo sencillo
+   (puede ser uno que ya uses tú misma con un "+", por ejemplo
+   `raiqueltaveras18+demo@gmail.com` — a Gmail le da igual lo que pongas
+   después del "+", todo llega a tu misma bandeja de entrada, pero para
+   Procomly es un correo distinto) y marca únicamente el puesto
+   "Observador (solo lectura)". Guarda.
+2. Entra a Procomly con ese correo (pestaña "Crear cuenta") y ponle una
+   contraseña sencilla — en cuanto la cuenta se cree, queda automáticamente
+   con el puesto que le asignaste en el paso 1, sin que tengas que hacer
+   nada más.
+3. Comparte ese mismo correo y esa misma contraseña con todos los
+   probadores. Todos entran con la misma cuenta al mismo tiempo si hace
+   falta, ven absolutamente todo el sistema con los datos reales, y no hay
+   ningún riesgo de que alguien cree, edite o borre algo por accidente.
+
 **Al confirmar mi correo me manda a una página que no carga ("localhost rechazó la conexión")**
 Es normal y no significa que algo falló: tu cuenta ya quedó confirmada en
 Supabase, solo que la página a la que te redirige después de confirmar

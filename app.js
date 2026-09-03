@@ -34,8 +34,16 @@
   function hasBeenPublished(c) { return PUBLISHED_OR_LATER_STAGES.indexOf(c.stage) !== -1; }
   var ROLE_LABELS = {
     area: "Área requirente", secretaria: "Secretaría Administrativa", gerente: "Gerente de Compras",
-    coordinador: "Coordinador", analista: "Analista", juridico: "Consultoría Jurídica"
+    coordinador: "Coordinador", analista: "Analista", juridico: "Consultoría Jurídica",
+    observador: "Observador (solo lectura)"
   };
+  // Puesto de solo lectura: ve absolutamente todo (todos los procesos en
+  // cualquier etapa, el directorio, Áreas y usuarios) pero no puede crear,
+  // editar, avanzar ni borrar nada — pensado para dar acceso de
+  // demostración/revisión sin riesgo de tocar datos reales. No forma parte
+  // del flujo de un proceso, así que NO va en ROLE_ORDER/PIPELINE_ROLE_ORDER
+  // de abajo — solo se agrega a las listas de puestos asignables.
+  var ASSIGNABLE_ROLES = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico", "observador"];
   var ROLE_ORDER = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"];
   var PIPELINE_ROLE_ORDER = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"];
   var DEVOLVER_STAGE_FOR_ROLE = { secretaria: "secretaria", gerente: "gerente", coordinador: "coordinador", analista: "analista", area: "area-correccion" };
@@ -209,13 +217,15 @@
     async requestPasswordReset(email) { return sb.auth.resetPasswordForEmail(email); },
 
     async fetchAll() {
+      var myId = state.user ? state.user.id : null;
       var results = await Promise.all([
         sb.from("profiles").select("*").order("full_name"),
         sb.from("pending_profiles").select("*").order("created_at"),
         sb.from("areas").select("*").order("name"),
         sb.from("cases").select("*").order("created_at"),
         sb.from("case_events").select("*").order("ts"),
-        sb.from("attachments").select("*").order("created_at")
+        sb.from("attachments").select("*").order("created_at"),
+        myId ? sb.from("notifications").select("*").eq("recipient_id", myId).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null })
       ]);
       results.forEach(function (r) { if (r.error) throw r.error; });
       return {
@@ -224,8 +234,18 @@
         areas: results[2].data || [],
         cases: results[3].data || [],
         events: results[4].data || [],
-        attachments: results[5].data || []
+        attachments: results[5].data || [],
+        notifications: results[6].data || []
       };
+    },
+    async markNotificationRead(id) {
+      var r = await sb.from("notifications").update({ read: true }).eq("id", id);
+      if (r.error) throw r.error;
+    },
+    async markAllNotificationsRead(ids) {
+      if (!ids.length) return;
+      var r = await sb.from("notifications").update({ read: true }).in("id", ids);
+      if (r.error) throw r.error;
     },
 
     async createArea(name, manager, secretaryName, secretaryContact) {
@@ -273,7 +293,7 @@
       // eso creamos primero con un id generado en el navegador, y lo buscamos
       // en una segunda consulta separada — eso sí funciona siempre.
       var id = fields.id || newUuid();
-      var payload = Object.assign({}, fields, { id: id });
+      var payload = Object.assign({ created_by: state.me ? state.me.id : null }, fields, { id: id });
       var insertRes = await sb.from("cases").insert(payload);
       if (insertRes.error) throw insertRes.error;
       var r = await sb.from("cases").select().eq("id", id).single();
@@ -337,6 +357,7 @@
     cases: [],
     events: [],       // todos los eventos de todos los procesos
     attachments: [],  // todos los adjuntos de todos los procesos
+    notifications: [], // solo las mías (bandeja de notificaciones)
     activeTab: "home",
     authMode: "signin", // 'signin' | 'signup'
     caseFilterArea: "",
@@ -499,8 +520,10 @@
       state.cases = data.cases;
       state.events = data.events;
       state.attachments = data.attachments;
+      state.notifications = data.notifications;
       state.me = profileById(state.user.id);
       state.loading = false;
+      if (state.me && state.me.active === false) { renderDeactivatedScreen(); return; }
       renderShell();
     } catch (err) {
       state.loading = false;
@@ -518,9 +541,16 @@
       state.cases = data.cases;
       state.events = data.events;
       state.attachments = data.attachments;
+      state.notifications = data.notifications;
       state.me = profileById(state.user.id);
+      if (state.me && state.me.active === false) {
+        if (window.__eted_interval) { clearInterval(window.__eted_interval); window.__eted_interval = null; }
+        renderDeactivatedScreen();
+        return;
+      }
       renderRoute();
       renderSidebar();
+      renderNotifBell();
     } catch (err) {
       console.error(err);
       if (!quiet) showToast("No se pudo actualizar", String(err.message || err), true);
@@ -549,6 +579,18 @@
       "</div></div>";
     var b = $("#err-signout");
     if (b) b.addEventListener("click", async function () { await DB.signOut(); location.reload(); });
+  }
+
+  function renderDeactivatedScreen() {
+    document.body.innerHTML =
+      '<div class="auth-shell"><div class="auth-box">' +
+      '<div class="auth-brand"><span class="logo-dot"></span><span>Procomly</span></div>' +
+      '<p class="sub">Tu cuenta fue desactivada por un administrador de Procomly.</p>' +
+      '<p class="hint">Ya no tienes acceso a los procesos ni a ninguna acción dentro de la aplicación. Si crees que es un error, contacta al administrador para que reactive tu cuenta.</p>' +
+      '<button type="button" class="btn ghost" id="deactivated-signout" style="margin-top:12px;">Cerrar sesión</button>' +
+      "</div></div>";
+    var b = $("#deactivated-signout");
+    if (b) b.addEventListener("click", async function () { await DB.signOut(); });
   }
 
   // ============================================================ auth gate
@@ -650,6 +692,10 @@
       '<div class="topbar-spacer"></div>' +
       '<button type="button" class="topbar-btn" id="theme-toggle"></button>' +
       '<button type="button" class="topbar-btn" id="refresh-btn">⟳ Actualizar</button>' +
+      '<div class="notif-wrap">' +
+      '<button type="button" class="topbar-btn" id="notif-bell">🔔<span class="notif-bell-badge" id="notif-badge" hidden>0</span></button>' +
+      '<div class="notif-panel" id="notif-panel" hidden></div>' +
+      "</div>" +
       '<button type="button" class="user-chip" id="user-chip"></button>' +
       "</header>" +
       '<main class="content" id="content"></main>' +
@@ -660,10 +706,21 @@
     renderSidebar();
     renderTopUser();
     renderRoute();
+    renderNotifBell();
 
     $("#refresh-btn").addEventListener("click", function () { refreshData(); });
     $("#user-chip").addEventListener("click", onUserChipClick);
     $("#menu-toggle").addEventListener("click", function () { $("#sidebar").classList.toggle("open"); });
+    $("#notif-bell").addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var panel = $("#notif-panel");
+      if (panel) panel.hidden = !panel.hidden;
+    });
+    $("#notif-panel").addEventListener("click", function (ev) { ev.stopPropagation(); });
+    document.addEventListener("click", function () {
+      var panel = $("#notif-panel");
+      if (panel) panel.hidden = true;
+    });
 
     if (!window.__eted_interval) {
       window.__eted_interval = setInterval(function () { refreshData(true); }, 60000);
@@ -679,6 +736,87 @@
   async function onUserChipClick() {
     var choice = await showConfirm("¿Cerrar la sesión de " + esc(state.me.full_name || state.me.email) + "?");
     if (choice) { await DB.signOut(); }
+  }
+
+  // =========================================================== Notificaciones
+  function renderNotifBell() {
+    var badge = $("#notif-badge");
+    var panel = $("#notif-panel");
+    if (!badge || !panel) return;
+    var list = (state.notifications || []).slice();
+    var unread = list.filter(function (n) { return !n.read; });
+    if (unread.length) {
+      badge.hidden = false;
+      badge.textContent = unread.length > 99 ? "99+" : String(unread.length);
+    } else {
+      badge.hidden = true;
+    }
+    var wasOpen = !panel.hidden;
+    var head = '<div class="notif-panel-head"><span>Notificaciones</span>' +
+      (unread.length ? '<button type="button" class="btn ghost small" id="notif-mark-all">Marcar todas como leídas</button>' : "") +
+      "</div>";
+    var body;
+    if (!list.length) {
+      body = '<p class="notif-empty">No tienes notificaciones todavía.</p>';
+    } else {
+      body = list.slice(0, 30).map(function (n) {
+        return '<button type="button" class="notif-item' + (n.read ? "" : " unread") + '" data-notif-id="' + esc(n.id) + '" data-case-id="' + esc(n.case_id || "") + '">' +
+          '<div class="n-title">' + esc(n.title) + "</div>" +
+          (n.body ? '<div class="n-body">' + esc(n.body) + "</div>" : "") +
+          '<div class="n-time">' + fmtDateTime(n.created_at) + "</div>" +
+          "</button>";
+      }).join("");
+    }
+    panel.innerHTML = head + body;
+    panel.hidden = !wasOpen;
+
+    var markAllBtn = $("#notif-mark-all");
+    if (markAllBtn) {
+      markAllBtn.addEventListener("click", async function (ev) {
+        ev.stopPropagation();
+        var ids = unread.map(function (n) { return n.id; });
+        try {
+          await DB.markAllNotificationsRead(ids);
+          await refreshData(true);
+        } catch (err) {
+          console.error(err);
+          showToast("No se pudo actualizar", String(err.message || err), true);
+        }
+      });
+    }
+    $$(".notif-item", panel).forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        var notifId = btn.getAttribute("data-notif-id");
+        var caseId = btn.getAttribute("data-case-id");
+        panel.hidden = true;
+        try {
+          await DB.markNotificationRead(notifId);
+          await refreshData(true);
+        } catch (err) {
+          console.error(err);
+        }
+        if (caseId) goToCase(caseId);
+      });
+    });
+  }
+
+  function goToCase(caseId) {
+    var c = state.cases.filter(function (cc) { return cc.id === caseId; })[0];
+    if (!c) return;
+    state.activeTab = "procesos";
+    if (c.area_id && state.caseFilterArea && state.caseFilterArea !== c.area_id) {
+      state.caseFilterArea = "";
+    }
+    renderSidebar();
+    renderRoute();
+    setTimeout(function () {
+      var card = document.querySelector('.case-card[data-id="' + caseId + '"]');
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        card.classList.add("case-highlight");
+        setTimeout(function () { card.classList.remove("case-highlight"); }, 2000);
+      }
+    }, 50);
   }
 
   function pendingForMe() {
@@ -1633,6 +1771,8 @@
     var box = $("#users-list");
     if (!box) return;
     var sorted = state.profiles.slice().sort(function (a, b) {
+      var ai = a.active === false, bi = b.active === false;
+      if (ai !== bi) return ai ? 1 : -1;
       var ap = !a.roles || !a.roles.length, bp = !b.roles || !b.roles.length;
       if (ap !== bp) return ap ? -1 : 1;
       return (a.full_name || a.email).localeCompare(b.full_name || b.email);
@@ -1640,11 +1780,19 @@
     if (!sorted.length) { box.innerHTML = '<p class="hint">Todavía no hay nadie registrado.</p>'; return; }
     box.innerHTML = sorted.map(function (p) {
       var pending = !p.roles || !p.roles.length;
-      return '<div class="user-row-wrap" data-user-id="' + esc(p.id) + '">' +
+      var inactive = p.active === false;
+      var isSelf = state.me && p.id === state.me.id;
+      var metaHtml = inactive
+        ? '<span style="color:var(--critical); font-weight:600;">Cuenta desactivada</span>'
+        : (pending ? '<span style="color:var(--warning); font-weight:600;">Sin puesto asignado — pendiente</span>' : userMetaText(p));
+      return '<div class="user-row-wrap' + (inactive ? " user-row-inactive" : "") + '" data-user-id="' + esc(p.id) + '">' +
         '<div class="user-row"><div class="user-row-main"><span class="avatar">' + esc(initials(p.full_name || p.email)) + '</span>' +
         '<div class="user-row-text"><span class="u-name">' + esc(p.full_name || p.email) + (p.is_admin ? " · Admin" : "") + '</span>' +
-        '<span class="u-meta">' + (pending ? '<span style="color:var(--warning); font-weight:600;">Sin puesto asignado — pendiente</span>' : userMetaText(p)) + "</span></div></div>" +
+        '<span class="u-meta">' + metaHtml + "</span></div></div>" +
+        '<div class="user-row-actions">' +
         '<button type="button" class="btn ghost small profile-toggle">Perfil</button>' +
+        (isSelf ? "" : '<button type="button" class="btn ghost small' + (inactive ? "" : " danger") + ' user-toggle-active">' + (inactive ? "Reactivar" : "Desactivar") + "</button>") +
+        "</div>" +
         "</div>" +
         '<div class="user-profile" hidden></div>' +
         "</div>";
@@ -1657,6 +1805,30 @@
         if (!panel.hidden) renderUserProfilePanel(panel, wrap.getAttribute("data-user-id"));
       });
     });
+    $$(".user-toggle-active", box).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var wrap = btn.closest(".user-row-wrap");
+        onToggleUserActive(wrap.getAttribute("data-user-id"));
+      });
+    });
+  }
+  async function onToggleUserActive(userId) {
+    var p = profileById(userId);
+    if (!p) return;
+    var willActivate = p.active === false;
+    var name = p.full_name || p.email;
+    var msg = willActivate
+      ? "¿Reactivar la cuenta de " + esc(name) + "? Recupera de inmediato su puesto y todos sus permisos."
+      : "¿Desactivar la cuenta de " + esc(name) + "? Pierde de inmediato todo acceso a Procomly (no puede ver ni hacer nada), pero su historial en los procesos se conserva. Puedes reactivarla cuando quieras.";
+    if (!(await showConfirm(msg))) return;
+    try {
+      await DB.updateProfile(userId, { active: willActivate });
+      showToast(willActivate ? "Cuenta reactivada" : "Cuenta desactivada", name);
+      await refreshData(true);
+      renderRoute();
+    } catch (err) {
+      showToast("No se pudo actualizar", String(err.message || err), true);
+    }
   }
   function userMetaText(p) {
     var tipoLabel = "";
@@ -1697,7 +1869,7 @@
     });
   }
   function editUserFormHTML(p) {
-    var roleChecks = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"].map(function (r) {
+    var roleChecks = ASSIGNABLE_ROLES.map(function (r) {
       return '<label><input type="checkbox" class="eu-role-check" value="' + r + '"' + (p.roles.indexOf(r) !== -1 ? " checked" : "") + "> " + esc(ROLE_LABELS[r]) + "</label>";
     }).join("");
     var areaOpts = state.areas.map(function (a) { return optHtml(a.id, a.name) .replace('value="' + a.id + '"', 'value="' + a.id + '"' + (a.id === p.area_id ? " selected" : "")); }).join("");
@@ -1756,7 +1928,7 @@
   function pendingInviteFormHTML(existing) {
     var isEdit = !!existing;
     var roles = existing ? existing.roles : [];
-    var roleChecks = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"].map(function (r) {
+    var roleChecks = ASSIGNABLE_ROLES.map(function (r) {
       return '<label><input type="checkbox" class="ni-role-check" value="' + r + '"' + (roles.indexOf(r) !== -1 ? " checked" : "") + "> " + esc(ROLE_LABELS[r]) + "</label>";
     }).join("");
     var areaOpts = state.areas.map(function (a) { return optHtml(a.id, a.name).replace('value="' + a.id + '"', 'value="' + a.id + '"' + (existing && a.id === existing.area_id ? " selected" : "")); }).join("");
