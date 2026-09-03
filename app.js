@@ -427,6 +427,7 @@
   // ================================================================ init
   document.addEventListener("DOMContentLoaded", init);
 
+  var appAlreadyLoaded = false; // evita reconstruir toda la pantalla en cada renovación silenciosa del token
   async function init() {
     wireThemeToggle();
     wireGlobalModalsOnce();
@@ -440,16 +441,26 @@
       return;
     }
 
+    // Supabase dispara este evento no solo al iniciar sesión, sino también
+    // cada vez que renueva el token de acceso en segundo plano (varias veces
+    // por hora, silenciosamente) — si cada uno de esos disparos reconstruye
+    // toda la pantalla, borra cualquier formulario a medio llenar (por
+    // ejemplo "Nueva solicitud"). Por eso solo se recarga toda la app la
+    // PRIMERA vez que hay sesión; las renovaciones de token después de eso
+    // solo actualizan el token guardado, sin tocar la pantalla.
     DB.onAuthStateChange(function (_event, session) {
       state.session = session;
       state.user = session ? session.user : null;
-      if (session) { loadAndRenderApp(); } else { state.me = null; renderAuthGate(); }
+      if (!session) { state.me = null; appAlreadyLoaded = false; renderAuthGate(); return; }
+      if (appAlreadyLoaded) return;
+      appAlreadyLoaded = true;
+      loadAndRenderApp();
     });
 
     var session = await DB.getSession().catch(function () { return null; });
     state.session = session;
     state.user = session ? session.user : null;
-    if (session) { await loadAndRenderApp(); } else { renderAuthGate(); }
+    if (session) { appAlreadyLoaded = true; await loadAndRenderApp(); } else { renderAuthGate(); }
   }
 
   async function loadAndRenderApp() {
