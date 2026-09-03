@@ -41,7 +41,7 @@ create table public.profiles (
   position_title  text not null default '',
   department      text not null default '',
   area_id         uuid references public.areas (id) on delete set null,
-  roles           text[] not null default '{}',   -- subconjunto de: area, secretaria, gerente, coordinador, analista, juridico, observador
+  roles           text[] not null default '{}',   -- subconjunto de: area, secretaria, gerente, coordinador, analista, juridico
   coord_tipos     text[] not null default '{}',   -- subconjunto de: menor, licitacion (solo aplica si 'coordinador' está en roles)
   is_admin        boolean not null default false,
   active          boolean not null default true,  -- desactivar en vez de borrar la cuenta
@@ -87,7 +87,6 @@ create table public.cases (
   gerente_id      uuid references public.profiles (id),
   coordinador_id  uuid references public.profiles (id),
   analista_id     uuid references public.profiles (id),
-  created_by      uuid references public.profiles (id), -- quién la registró (nulo en los procesos importados del Excel, que no tienen cuenta real de origen)
   rework_count    int not null default 0,
 
   -- Campos administrativos adicionales, tomados del Excel de seguimiento de
@@ -161,32 +160,12 @@ create table public.notifications_log (
   created_at    timestamptz not null default now()
 );
 
--- Bandeja de notificaciones DENTRO de la aplicación (distinta de la bitácora
--- de arriba): cada fila es una notificación real para una persona concreta,
--- que puede marcar como leída. No envía correos — ver la función
--- fanout_case_event_notifications() más abajo, que la llena automáticamente.
-create table public.notifications (
-  id            uuid primary key default gen_random_uuid(),
-  recipient_id  uuid not null references public.profiles (id) on delete cascade,
-  case_id       uuid references public.cases (id) on delete cascade,
-  kind          text not null default '',
-  title         text not null,
-  body          text not null default '',
-  read          boolean not null default false,
-  created_at    timestamptz not null default now()
-);
-
 -- ============================================================================
 -- 2. FUNCIONES DE APOYO PARA LAS POLÍTICAS DE SEGURIDAD
 -- ============================================================================
 -- Se declaran "security definer" para poder consultar la tabla profiles sin
 -- disparar de nuevo sus propias políticas de RLS (evita recursión infinita).
 
--- Nota: ambas funciones exigen "active" además del puesto/permiso en sí —
--- así, desactivar una cuenta (en vez de borrarla) le quita de inmediato
--- todo acceso funcional en toda la aplicación (nadie más necesita revisar
--- "active" por su cuenta, porque prácticamente todas las políticas de
--- seguridad pasan por estas dos funciones).
 create or replace function public.is_admin()
 returns boolean
 language sql
@@ -194,7 +173,7 @@ security definer
 set search_path = public
 stable
 as $$
-  select coalesce((select is_admin from public.profiles where id = auth.uid() and active), false);
+  select coalesce((select is_admin from public.profiles where id = auth.uid()), false);
 $$;
 
 create or replace function public.has_role(check_role text)
@@ -205,7 +184,7 @@ set search_path = public
 stable
 as $$
   select coalesce(
-    (select check_role = any(roles) from public.profiles where id = auth.uid() and active),
+    (select check_role = any(roles) from public.profiles where id = auth.uid()),
     false
   );
 $$;
@@ -224,15 +203,9 @@ $$;
 -- Jurídico ven todos los procesos (necesitan visión completa del flujo).
 -- Coordinador y Analista solo ven los procesos que tienen asignados a
 -- ellos mismos (aunque el proceso ya haya avanzado a otra etapa). Área
--- requirente solo ve los procesos de su propia área. Observador ve todos
--- los procesos igual que Secretaría/Gerencia/Jurídico, pero (a diferencia
--- de esos puestos) no aparece en ninguna política de escritura de este
--- archivo — por diseño, es un puesto de solo lectura: ningún botón de
--- acción le queda habilitado en ninguna etapa, para dar acceso de
--- demostración/revisión sin riesgo de que alguien toque datos reales. El
--- administrador siempre ve todo. Se usa para las políticas de "select" de
--- cases, case_events y attachments, así las tres tablas quedan
--- consistentes.
+-- requirente solo ve los procesos de su propia área. El administrador
+-- siempre ve todo. Se usa para las políticas de "select" de cases,
+-- case_events y attachments, así las tres tablas quedan consistentes.
 create or replace function public.can_view_case(target_case_id uuid)
 returns boolean
 language sql
@@ -248,7 +221,6 @@ as $$
         or public.has_role('secretaria')
         or public.has_role('gerente')
         or public.has_role('juridico')
-        or public.has_role('observador')
         or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
         or (public.has_role('analista') and c.analista_id = auth.uid())
         or (public.has_role('area') and c.area_id = public.my_area_id())
@@ -368,7 +340,6 @@ alter table public.cases             enable row level security;
 alter table public.case_events       enable row level security;
 alter table public.attachments       enable row level security;
 alter table public.notifications_log enable row level security;
-alter table public.notifications     enable row level security;
 
 -- ---------- profiles ----------
 -- Cualquier persona que inició sesión puede ver el directorio (nombres,
@@ -594,80 +565,6 @@ create policy "notifications_log_insert_authenticated"
   on public.notifications_log for insert
   to authenticated
   with check (true);
-
--- ---------- notifications (bandeja dentro de la app) ----------
--- Cada quien ve y marca como leídas solo sus propias notificaciones (el
--- administrador puede verlas todas, para poder ayudar/depurar). Nadie
--- inserta directamente desde el navegador — las crea siempre la función
--- fanout_case_event_notifications() de abajo, con privilegios propios.
-create policy "notifications_select_own"
-  on public.notifications for select
-  to authenticated
-  using (recipient_id = auth.uid() or public.is_admin());
-
-create policy "notifications_update_own"
-  on public.notifications for update
-  to authenticated
-  using (recipient_id = auth.uid())
-  with check (recipient_id = auth.uid());
-
--- Cada vez que se registra un evento sobre un proceso (se crea, se asigna
--- coordinador/analista, avanza de etapa, se devuelve, se edita, etc.), avisa
--- automáticamente a: quien tenga el proceso asignado como coordinador o
--- analista, a quien lo registró originalmente, y a todo el que tenga el
--- puesto de Gerente de Compras (que le da seguimiento a todo en general) —
--- sin repetir a la misma persona dos veces ni notificar a quien hizo la
--- propia acción.
-create or replace function public.fanout_case_event_notifications()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  c public.cases%rowtype;
-  ger record;
-  already uuid[] := '{}';
-  resumen text;
-begin
-  select * into c from public.cases where id = new.case_id;
-  if not found then return new; end if;
-
-  resumen := trim(coalesce(new.actor_name, '') || ' ' || coalesce(new.action, ''));
-
-  if c.coordinador_id is not null and c.coordinador_id <> new.actor_id then
-    insert into public.notifications (recipient_id, case_id, kind, title, body)
-    values (c.coordinador_id, c.id, 'proceso', c.title, resumen);
-    already := already || c.coordinador_id;
-  end if;
-
-  if c.analista_id is not null and c.analista_id <> new.actor_id and not (c.analista_id = any(already)) then
-    insert into public.notifications (recipient_id, case_id, kind, title, body)
-    values (c.analista_id, c.id, 'proceso', c.title, resumen);
-    already := already || c.analista_id;
-  end if;
-
-  if c.created_by is not null and c.created_by <> new.actor_id and not (c.created_by = any(already)) then
-    insert into public.notifications (recipient_id, case_id, kind, title, body)
-    values (c.created_by, c.id, 'proceso', c.title, resumen);
-    already := already || c.created_by;
-  end if;
-
-  for ger in select id from public.profiles where 'gerente' = any(roles) and active loop
-    if ger.id <> new.actor_id and not (ger.id = any(already)) then
-      insert into public.notifications (recipient_id, case_id, kind, title, body)
-      values (ger.id, c.id, 'proceso', c.title, resumen);
-      already := already || ger.id;
-    end if;
-  end loop;
-
-  return new;
-end;
-$$;
-
-create trigger case_events_notify
-  after insert on public.case_events
-  for each row execute procedure public.fanout_case_event_notifications();
 
 -- ============================================================================
 -- 5. ALMACENAMIENTO (Storage) — bucket para los archivos adjuntos
