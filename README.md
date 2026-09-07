@@ -100,9 +100,9 @@ válidas; luego registra el número de orden de compra y, cuando se paga,
 plegable de "Datos administrativos" (modalidad, referencia, números de
 comunicación y de solicitud de pedido, monto presupuestado, si es parte del
 PACC, y observaciones) — los mismos datos que antes solo vivían en el
-Excel compartido, ahora dentro de Procomly. En "Panorama de tiempos" se
-puede descargar un CSV con un renglón por proceso y todas estas columnas,
-listo para reemplazar el reporte manual.
+Excel compartido, ahora dentro de Procomly. En "Dashboard" (pestaña
+"Tiempos") se puede descargar un CSV con un renglón por proceso y todas
+estas columnas, listo para reemplazar el reporte manual.
 
 Cada tarjeta de proceso también tiene una sección plegable de "Editar
 solicitud" para corregir los datos básicos que se llenaron al registrarla
@@ -146,6 +146,25 @@ requirente solo ve los procesos de su propia área — el resto de los puestos
 (Secretaría, Gerencia, Jurídico, Administrador) ven todos los procesos,
 porque necesitan seguimiento del flujo completo. La tabla de permisos
 completa está en `SETUP.md`.
+
+## Dashboard
+
+La pestaña "Dashboard" (antes "Panorama de tiempos") reúne en gráficos todo
+el panorama de la Gerencia de Compras, organizado en pestañas internas para
+no tener que hacer mucho scroll:
+
+- **Resumen**: total de procesos registrados en el año en curso, total
+  histórico, y un gráfico de procesos registrados por mes.
+- **Por coordinación**: total de procesos de Licitaciones vs. Compras
+  menores (histórico), y ese mismo desglose mes a mes.
+- **Áreas**: las 10 áreas requirentes con más procesos registrados.
+- **Presupuesto**: los 10 procesos con mayor monto presupuestado y su área.
+- **Tiempos**: los gráficos originales de tiempo promedio por etapa y por
+  área, la tabla de procesos por área requirente, y los botones para
+  descargar los CSV de procesos e historial.
+
+En todos los gráficos organizados por mes, el mes en curso queda resaltado
+con un borde de color para ubicarlo de un vistazo.
 
 ## Bandeja de notificaciones
 

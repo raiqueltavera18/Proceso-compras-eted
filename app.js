@@ -29,7 +29,7 @@
   var TERMINAL_STAGES = ["desierto", "cerrado", "cancelado"];
   function isTerminalStage(stage) { return TERMINAL_STAGES.indexOf(stage) !== -1; }
   // El proceso ya se publicó (o siguió de largo desde ahí) — se usa para las
-  // estadísticas de "publicados" y "tiempo hasta publicar" del Panorama.
+  // estadísticas de "publicados" y "tiempo hasta publicar" del Dashboard.
   var PUBLISHED_OR_LATER_STAGES = ["publicado", "adjudicado", "desierto", "pendiente-pago", "cerrado"];
   function hasBeenPublished(c) { return PUBLISHED_OR_LATER_STAGES.indexOf(c.stage) !== -1; }
   var ROLE_LABELS = {
@@ -359,6 +359,7 @@
     attachments: [],  // todos los adjuntos de todos los procesos
     notifications: [], // solo las mías (bandeja de notificaciones)
     activeTab: "home",
+    dashboardSubtab: "resumen", // pestaña activa dentro del Dashboard
     authMode: "signin", // 'signin' | 'signup'
     caseFilterArea: "",
     loading: true,
@@ -690,7 +691,7 @@
     { key: "home", label: "Inicio", icon: "🏠" },
     { key: "nueva", label: "Nueva solicitud", icon: "➕" },
     { key: "procesos", label: "Procesos en curso", icon: "📋" },
-    { key: "panorama", label: "Panorama de tiempos", icon: "📊" },
+    { key: "panorama", label: "Dashboard", icon: "📊" },
     { key: "areas", label: "Áreas y usuarios", icon: "🏢" }
   ];
 
@@ -883,7 +884,7 @@
   }
 
   function renderRoute() {
-    var titleMap = { home: "Inicio", nueva: "Nueva solicitud de compra", procesos: "Procesos en curso", panorama: "Panorama de tiempos", areas: "Áreas y usuarios" };
+    var titleMap = { home: "Inicio", nueva: "Nueva solicitud de compra", procesos: "Procesos en curso", panorama: "Dashboard", areas: "Áreas y usuarios" };
     var titleEl = $("#topbar-title");
     if (titleEl) titleEl.textContent = titleMap[state.activeTab] || "";
     var box = $("#content");
@@ -891,7 +892,7 @@
     if (state.activeTab === "home") renderHome(box);
     else if (state.activeTab === "nueva") renderNuevaSolicitud(box);
     else if (state.activeTab === "procesos") renderProcesos(box);
-    else if (state.activeTab === "panorama") renderPanorama(box);
+    else if (state.activeTab === "panorama") renderDashboard(box);
     else if (state.activeTab === "areas") renderAreasUsuarios(box);
     wireCaseActionsOnce();
   }
@@ -1615,11 +1616,130 @@
     }
   }
 
-  // ===================================================== Panorama/tiempos
-  function renderPanorama(box) {
+  // ========================================================== Dashboard
+  var DASH_MONTH_LABELS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  var DASH_SUBTABS = [
+    { key: "resumen", label: "Resumen" },
+    { key: "coordinacion", label: "Por coordinación" },
+    { key: "areas", label: "Áreas" },
+    { key: "presupuesto", label: "Presupuesto" },
+    { key: "tiempos", label: "Tiempos" }
+  ];
+
+  function computeDashboardStats() {
+    var now = new Date();
+    var currentYear = now.getFullYear();
+    var currentMonth = now.getMonth();
+    var casesThisYear = state.cases.filter(function (c) { return new Date(c.created_at).getFullYear() === currentYear; });
+
+    var monthTotals = DASH_MONTH_LABELS.map(function (label, i) {
+      var count = casesThisYear.filter(function (c) { return new Date(c.created_at).getMonth() === i; }).length;
+      return { i: i, label: label, count: count, current: i === currentMonth };
+    });
+
+    var tipoAllTime = { menor: 0, licitacion: 0 };
+    state.cases.forEach(function (c) { if (tipoAllTime[c.tipo] != null) tipoAllTime[c.tipo]++; });
+
+    var monthByTipo = DASH_MONTH_LABELS.map(function (label, i) {
+      var inMonth = casesThisYear.filter(function (c) { return new Date(c.created_at).getMonth() === i; });
+      var menor = inMonth.filter(function (c) { return c.tipo === "menor"; }).length;
+      var licitacion = inMonth.filter(function (c) { return c.tipo === "licitacion"; }).length;
+      return { i: i, label: label, menor: menor, licitacion: licitacion, total: menor + licitacion, current: i === currentMonth };
+    });
+
+    var areaCounts = {};
+    state.cases.forEach(function (c) { areaCounts[c.area_id] = (areaCounts[c.area_id] || 0) + 1; });
+    var topAreas = Object.keys(areaCounts).map(function (id) {
+      return { label: areaName(id) || "(área eliminada)", count: areaCounts[id] };
+    }).sort(function (a, b) { return b.count - a.count; }).slice(0, 10);
+
+    var topBudget = state.cases.filter(function (c) { return c.monto_presupuestado != null && c.monto_presupuestado > 0; })
+      .sort(function (a, b) { return (b.monto_presupuestado || 0) - (a.monto_presupuestado || 0); })
+      .slice(0, 10)
+      .map(function (c) { return { title: c.title, area: areaName(c.area_id) || "—", tipo: c.tipo, monto: c.monto_presupuestado }; });
+
+    return {
+      currentYear: currentYear, currentMonth: currentMonth, monthLabels: DASH_MONTH_LABELS,
+      totalAllTime: state.cases.length, totalThisYear: casesThisYear.length,
+      monthTotals: monthTotals, tipoAllTime: tipoAllTime, monthByTipo: monthByTipo,
+      topAreas: topAreas, topBudget: topBudget
+    };
+  }
+
+  function renderDashboard(box) {
     var stats = computeStats();
+    var d = computeDashboardStats();
+    var sub = state.dashboardSubtab || "resumen";
+    if (!DASH_SUBTABS.some(function (t) { return t.key === sub; })) sub = "resumen";
     box.innerHTML =
-      '<div class="page-head-actions" style="margin-bottom:16px; display:flex; gap:8px; flex-wrap:wrap;">' +
+      '<div class="dash-subtabs">' + DASH_SUBTABS.map(function (t) {
+        return '<button type="button" class="dash-subtab-btn' + (t.key === sub ? " active" : "") + '" data-subtab="' + t.key + '">' + esc(t.label) + "</button>";
+      }).join("") + "</div>" +
+      '<div id="dash-subtab-content">' + renderDashboardSubtabContent(sub, stats, d) + "</div>";
+    $$(".dash-subtab-btn", box).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.dashboardSubtab = btn.getAttribute("data-subtab");
+        renderRoute();
+      });
+    });
+    var csvCasesBtn = $("#export-cases-csv-btn", box);
+    var csvHistBtn = $("#export-csv-btn", box);
+    if (csvCasesBtn) csvCasesBtn.addEventListener("click", exportCasesCSV);
+    if (csvHistBtn) csvHistBtn.addEventListener("click", exportHistoryCSV);
+  }
+
+  function renderDashboardSubtabContent(sub, stats, d) {
+    if (sub === "coordinacion") return renderDashboardCoordinacion(d);
+    if (sub === "areas") return renderDashboardAreas(d);
+    if (sub === "presupuesto") return renderDashboardPresupuesto(d);
+    if (sub === "tiempos") return renderDashboardTiempos(stats);
+    return renderDashboardResumen(d);
+  }
+
+  function renderDashboardResumen(d) {
+    return '<div class="kpi-row">' +
+      '<div class="kpi brand"><div class="v">' + d.totalThisYear + '</div><div class="l">Procesos registrados en ' + d.currentYear + '</div></div>' +
+      '<div class="kpi"><div class="v">' + d.totalAllTime + '</div><div class="l">Procesos totales (histórico)</div></div>' +
+      '<div class="kpi"><div class="v">' + d.monthTotals[d.currentMonth].count + '</div><div class="l">Registrados en ' + d.monthLabels[d.currentMonth] + '</div></div>' +
+      "</div>" +
+      '<div class="card"><div class="card-title">Procesos registrados por mes (' + d.currentYear + ')</div><div class="card-pad">' +
+      renderMonthlyBars(d.monthTotals) +
+      '<p class="hint" style="margin-top:10px;">Mes actual (' + d.monthLabels[d.currentMonth] + ") resaltado.</p>" +
+      "</div></div>";
+  }
+
+  function renderDashboardCoordinacion(d) {
+    return '<div class="card"><div class="card-title">Total por coordinación (histórico)</div><div class="card-pad">' +
+      renderTipoSplitBar(d.tipoAllTime) +
+      "</div></div>" +
+      '<div class="card" style="margin-top:16px;"><div class="card-title">Por coordinación y mes (' + d.currentYear + ')</div><div class="card-pad">' +
+      renderMonthlyStackedBars(d.monthByTipo) +
+      '<div class="split-legend" style="margin-top:12px;">' +
+      '<div class="split-item"><span class="dot dot-licitacion"></span>Licitación</div>' +
+      '<div class="split-item"><span class="dot dot-menor"></span>Compras menores</div>' +
+      "</div>" +
+      '<p class="hint" style="margin-top:6px;">Mes actual (' + d.monthLabels[d.currentMonth] + ") resaltado.</p>" +
+      "</div></div>";
+  }
+
+  function renderDashboardAreas(d) {
+    return '<div class="card"><div class="card-title">Top 10 áreas con más procesos registrados</div><div class="card-pad">' +
+      renderCountBars(d.topAreas) +
+      "</div></div>";
+  }
+
+  function renderDashboardPresupuesto(d) {
+    if (!d.topBudget.length) return '<div class="card card-pad"><p class="chart-empty">Todavía no hay procesos con monto presupuestado registrado.</p></div>';
+    return '<div class="card"><div class="card-title">Top 10 procesos con mayor presupuesto</div><div class="card-pad">' +
+      '<div class="table-wrap"><table class="list"><thead><tr><th>#</th><th>Proceso</th><th>Área</th><th>Tipo</th><th class="num">Monto presupuestado</th></tr></thead><tbody>' +
+      d.topBudget.map(function (c, i) {
+        return "<tr><td class=\"num\">" + (i + 1) + "</td><td>" + esc(c.title) + "</td><td>" + esc(c.area) + "</td><td>" + (c.tipo === "licitacion" ? "Licitación" : "Compra menor") + '</td><td class="num">RD$ ' + fmtMoney(c.monto) + "</td></tr>";
+      }).join("") + "</tbody></table></div>" +
+      "</div></div>";
+  }
+
+  function renderDashboardTiempos(stats) {
+    return '<div class="page-head-actions" style="margin-bottom:16px; display:flex; gap:8px; flex-wrap:wrap;">' +
       '<button type="button" class="btn secondary small" id="export-cases-csv-btn">⬇ Descargar procesos (CSV)</button>' +
       '<button type="button" class="btn secondary small" id="export-csv-btn">⬇ Descargar historial de eventos (CSV)</button>' +
       "</div>" +
@@ -1628,9 +1748,56 @@
       '<div class="card"><div class="card-title">Tiempo total promedio por área (publicados)</div><div class="card-pad">' + renderBars(stats.areaAverages) + "</div></div>" +
       "</div>" +
       '<div class="card" style="margin-top:16px;"><div class="card-title">Procesos por área requirente</div><div class="card-pad">' + renderAreaSummaryTable(stats.areaSummary) + "</div></div>";
-    $("#export-csv-btn").addEventListener("click", exportHistoryCSV);
-    $("#export-cases-csv-btn").addEventListener("click", exportCasesCSV);
   }
+
+  function renderMonthlyBars(monthTotals) {
+    var max = Math.max.apply(null, monthTotals.map(function (m) { return m.count; })) || 1;
+    return '<div class="vbar-chart">' + monthTotals.map(function (m) {
+      var h = m.count ? Math.max(4, Math.round((100 * m.count) / max)) : 0;
+      return '<div class="vbar-col' + (m.current ? " current" : "") + '">' +
+        '<div class="vbar-val">' + m.count + "</div>" +
+        '<div class="vbar-track"><div class="vbar-fill" style="height:' + h + '%"></div></div>' +
+        '<div class="vbar-label">' + m.label + "</div>" +
+        "</div>";
+    }).join("") + "</div>";
+  }
+
+  function renderMonthlyStackedBars(monthByTipo) {
+    var max = Math.max.apply(null, monthByTipo.map(function (m) { return m.total; })) || 1;
+    return '<div class="vbar-chart">' + monthByTipo.map(function (m) {
+      var hMenor = Math.round((100 * m.menor) / max);
+      var hLic = Math.round((100 * m.licitacion) / max);
+      return '<div class="vbar-col' + (m.current ? " current" : "") + '">' +
+        '<div class="vbar-val">' + m.total + "</div>" +
+        '<div class="vbar-track vbar-stack">' +
+        '<div class="vbar-fill vbar-fill-licitacion" style="height:' + hLic + '%"></div>' +
+        '<div class="vbar-fill vbar-fill-menor" style="height:' + hMenor + '%"></div>' +
+        "</div>" +
+        '<div class="vbar-label">' + m.label + "</div>" +
+        "</div>";
+    }).join("") + "</div>";
+  }
+
+  function renderTipoSplitBar(tipoAllTime) {
+    var total = tipoAllTime.menor + tipoAllTime.licitacion;
+    if (!total) return '<p class="chart-empty">Todavía no hay procesos registrados.</p>';
+    var pctMenor = Math.round((100 * tipoAllTime.menor) / total);
+    var pctLic = 100 - pctMenor;
+    return '<div class="split-bar"><div class="split-seg split-licitacion" style="width:' + pctLic + '%"></div><div class="split-seg split-menor" style="width:' + pctMenor + '%"></div></div>' +
+      '<div class="split-legend">' +
+      '<div class="split-item"><span class="dot dot-licitacion"></span>Licitación — <strong>' + tipoAllTime.licitacion + "</strong> (" + pctLic + "%)</div>" +
+      '<div class="split-item"><span class="dot dot-menor"></span>Compras menores — <strong>' + tipoAllTime.menor + "</strong> (" + pctMenor + "%)</div>" +
+      "</div>";
+  }
+
+  function renderCountBars(list) {
+    if (!list.length) return '<p class="chart-empty">Todavía no hay suficiente información para calcular esto.</p>';
+    var max = Math.max.apply(null, list.map(function (x) { return x.count; })) || 1;
+    return list.map(function (x, i) {
+      return '<div class="bar-row"><div class="name">' + (i + 1) + ". " + esc(x.label) + '</div><div class="bar-track"><div class="bar-fill" style="width:' + Math.max(4, Math.round((100 * x.count) / max)) + '%"></div></div><div class="val num">' + x.count + "</div></div>";
+    }).join("");
+  }
+
   function renderBars(list) {
     if (!list.length) return '<p class="chart-empty">Todavía no hay suficiente historial para calcular esto.</p>';
     var max = Math.max.apply(null, list.map(function (x) { return x.ms; })) || 1;
