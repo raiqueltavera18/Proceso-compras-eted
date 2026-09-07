@@ -532,6 +532,20 @@
     }
   }
 
+  // Evita reconstruir el formulario que la persona está llenando en ese
+  // momento (Nueva solicitud, Invitar persona, Editar perfil, notas de
+  // acción, etc.) cuando llega una actualización silenciosa en segundo
+  // plano — de lo contrario, cada 60 segundos se le borraría lo que
+  // llevaba escrito a mitad de camino.
+  function isEditingForm() {
+    var el = document.activeElement;
+    if (!el) return false;
+    var tag = el.tagName;
+    if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return false;
+    var content = $("#content");
+    return !!(content && content.contains(el));
+  }
+
   async function refreshData(quiet) {
     try {
       var data = await DB.fetchAll();
@@ -548,7 +562,10 @@
         renderDeactivatedScreen();
         return;
       }
-      renderRoute();
+      // El estado (state.*) ya quedó al día arriba en cualquier caso; lo
+      // único que se pospone es reconstruir la pantalla principal, para no
+      // interrumpir a quien está escribiendo en un formulario ahora mismo.
+      if (!(quiet && isEditingForm())) renderRoute();
       renderSidebar();
       renderNotifBell();
     } catch (err) {
