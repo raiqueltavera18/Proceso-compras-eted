@@ -9,9 +9,12 @@
   "use strict";
 
   // ============================================================ constantes
+  // Secretaría Administrativa y Gerencia de Compras se unificaron en un
+  // solo puesto/etapa ("gerente") — Secretaría actuaba bajo las directrices
+  // de Gerencia de todas formas, así que un proceso ahora pasa directo de
+  // "recién creado" a este puesto único, y de ahí a Coordinación.
   var STAGES = {
-    "secretaria":       { label: "Secretaría Administrativa", role: "secretaria" },
-    "gerente":          { label: "Gerente de Compras",        role: "gerente" },
+    "gerente":          { label: "Secretaría y Gerencia de Compras", role: "gerente" },
     "coordinador":      { label: "Coordinador",                role: "coordinador" },
     "analista":         { label: "Analista",                   role: "analista" },
     "correccion":       { label: "Analista — resolviendo objeción", role: "analista" },
@@ -33,7 +36,7 @@
   var PUBLISHED_OR_LATER_STAGES = ["publicado", "adjudicado", "desierto", "pendiente-pago", "cerrado"];
   function hasBeenPublished(c) { return PUBLISHED_OR_LATER_STAGES.indexOf(c.stage) !== -1; }
   var ROLE_LABELS = {
-    area: "Área requirente", secretaria: "Secretaría Administrativa", gerente: "Gerente de Compras",
+    area: "Área requirente", gerente: "Secretaría y Gerencia de Compras",
     coordinador: "Coordinador", analista: "Analista", juridico: "Consultoría Jurídica",
     observador: "Observador (solo lectura)"
   };
@@ -43,11 +46,11 @@
   // demostración/revisión sin riesgo de tocar datos reales. No forma parte
   // del flujo de un proceso, así que NO va en ROLE_ORDER/PIPELINE_ROLE_ORDER
   // de abajo — solo se agrega a las listas de puestos asignables.
-  var ASSIGNABLE_ROLES = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico", "observador"];
-  var ROLE_ORDER = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"];
-  var PIPELINE_ROLE_ORDER = ["area", "secretaria", "gerente", "coordinador", "analista", "juridico"];
-  var DEVOLVER_STAGE_FOR_ROLE = { secretaria: "secretaria", gerente: "gerente", coordinador: "coordinador", analista: "analista", area: "area-correccion" };
-  var DEVOLVER_FIELD_FOR_ROLE = { secretaria: "secretaria_id", gerente: "gerente_id", coordinador: "coordinador_id", analista: "analista_id" };
+  var ASSIGNABLE_ROLES = ["area", "gerente", "coordinador", "analista", "juridico", "observador"];
+  var ROLE_ORDER = ["area", "gerente", "coordinador", "analista", "juridico"];
+  var PIPELINE_ROLE_ORDER = ["area", "gerente", "coordinador", "analista", "juridico"];
+  var DEVOLVER_STAGE_FOR_ROLE = { gerente: "gerente", coordinador: "coordinador", analista: "analista", area: "area-correccion" };
+  var DEVOLVER_FIELD_FOR_ROLE = { gerente: "gerente_id", coordinador: "coordinador_id", analista: "analista_id" };
   // Modalidades de proceso reales de ETED (mismo catálogo que la hoja
   // "Modalidad de Procesos" del Excel de seguimiento que este software reemplaza).
   var MODALIDADES = [
@@ -847,7 +850,6 @@
       if (meta.role === "coordinador" && c.coordinador_id !== state.me.id) return false;
       if (meta.role === "analista" && c.analista_id !== state.me.id) return false;
       if (meta.role === "gerente" && c.gerente_id && c.gerente_id !== state.me.id) return false;
-      if (meta.role === "secretaria" && c.secretaria_id && c.secretaria_id !== state.me.id) return false;
       return true;
     }).length;
   }
@@ -985,7 +987,7 @@
         publishedDurations.push(endTs - created);
         (areaDurations[c.area_id] = areaDurations[c.area_id] || []).push(endTs - created);
       }
-      var prevTs = created, prevStageHeld = "secretaria";
+      var prevTs = created, prevStageHeld = "gerente";
       events.forEach(function (ev) {
         var ts = new Date(ev.ts).getTime();
         var dur = ts - prevTs;
@@ -1093,20 +1095,20 @@
       var submitBtn = form.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       try {
-        var secretarias = profilesByRole("secretaria");
-        var caseFields = { title: title, tipo: tipo, area_id: areaId, solicitante: solicitante, stage: "secretaria", proceso_pacc: paccVal };
+        var gerentes = profilesByRole("gerente");
+        var caseFields = { title: title, tipo: tipo, area_id: areaId, solicitante: solicitante, stage: "gerente", proceso_pacc: paccVal };
         if (montoPresupuestadoVal !== "") caseFields.monto_presupuestado = Number(montoPresupuestadoVal);
         if (modalidadVal) caseFields.modalidad = modalidadVal;
-        if (secretarias.length === 1) caseFields.secretaria_id = secretarias[0].id;
+        if (gerentes.length === 1) caseFields.gerente_id = gerentes[0].id;
         var created = await DB.createCase(caseFields);
-        await DB.insertEvent({ case_id: created.id, stage_held: "secretaria", actor_id: state.me.id, actor_name: solicitante, role_label: areaName(areaId), action: "registró la solicitud de compra", duration_ms: 0 });
+        await DB.insertEvent({ case_id: created.id, stage_held: "gerente", actor_id: state.me.id, actor_name: solicitante, role_label: areaName(areaId), action: "registró la solicitud de compra", duration_ms: 0 });
         for (var i = 0; i < staged.length; i++) {
           await DB.uploadAttachment(created.id, staged[i], state.me.id, state.me.full_name || state.me.email);
         }
-        if (secretarias.length === 1) {
-          await DB.logNotification(secretarias[0].email, secretarias[0].full_name, "Nueva solicitud de compra registrada",
-            "Se registró la solicitud \"" + title + "\" (" + areaName(areaId) + ") y quedó asignada a ti en la Secretaría Administrativa.", created.id);
-          showToast("📧 Notificación enviada (simulada)", "Para: " + secretarias[0].email);
+        if (gerentes.length === 1) {
+          await DB.logNotification(gerentes[0].email, gerentes[0].full_name, "Nueva solicitud de compra registrada",
+            "Se registró la solicitud \"" + title + "\" (" + areaName(areaId) + ") y quedó asignada a ti en Secretaría y Gerencia de Compras.", created.id);
+          showToast("📧 Notificación enviada (simulada)", "Para: " + gerentes[0].email);
         }
         showToast("Solicitud registrada", title);
         state.activeTab = "procesos";
@@ -1213,17 +1215,13 @@
     if (isTerminalStage(c.stage)) return "";
     var caseId = c.id, who = "", body = "";
 
-    if (c.stage === "secretaria") {
-      who = whoLine("secretaria", c.secretaria_id, false);
-      var secChecks = [
-        { key: "secretaria:area_verificada", label: "Verifiqué que el área requirente existe y los datos de la solicitud son correctos" },
-        { key: "secretaria:archivado", label: "Descargué la comunicación y la archivé digital y físicamente" }
-      ];
-      body = checklistHTML(caseId, secChecks) +
-        '<div class="action-buttons">' + actorBtn("to-gerente", "Recibir y remitir a Gerencia de Compras", "secretaria", c.secretaria_id, false, "", caseId, secChecks.map(function (i) { return i.key; })) + "</div>";
-    } else if (c.stage === "gerente") {
+    if (c.stage === "gerente") {
       who = whoLine("gerente", c.gerente_id, false);
-      var gerChecks = [{ key: "gerente:tipo_confirmado", label: "Confirmé si el proceso es Compra menor o Licitación y contrataciones" }];
+      var gerChecks = [
+        { key: "gerente:area_verificada", label: "Verifiqué que el área requirente existe y los datos de la solicitud son correctos" },
+        { key: "gerente:archivado", label: "Descargué la comunicación y la archivé digital y físicamente" },
+        { key: "gerente:tipo_confirmado", label: "Confirmé si el proceso es Compra menor o Licitación y contrataciones" }
+      ];
       var coordNames = coordinadoresParaTipo(c.tipo);
       body = checklistHTML(caseId, gerChecks) +
         assignSelectOrHint("coordinador", "Coordinador a asignar", "to-coordinador", "Asignar coordinador y remitir", "gerente", c.gerente_id, false, caseId, gerChecks.map(function (i) { return i.key; }), coordNames) +
@@ -1324,7 +1322,6 @@
     var meta = STAGES[c.stage];
     if (!meta || !meta.role) return null;
     var role = meta.role;
-    if (role === "secretaria") return { role: role, assignedId: c.secretaria_id, matchArea: false };
     if (role === "gerente") return { role: role, assignedId: c.gerente_id, matchArea: false };
     if (role === "coordinador") return { role: role, assignedId: c.coordinador_id, matchArea: false };
     if (role === "analista") return { role: role, assignedId: c.analista_id, matchArea: false };
@@ -1500,9 +1497,7 @@
 
     btn.disabled = true;
     try {
-      if (do_ === "to-gerente") {
-        await transition(c, "gerente", { actor: actorName, roleLabel: roleLabelForEvent, action: "recibió la solicitud y la remitió a Gerencia de Compras" });
-      } else if (do_ === "to-coordinador") {
+      if (do_ === "to-coordinador") {
         if (!target) { await showAlert("Selecciona un coordinador."); btn.disabled = false; return; }
         var coordP = profileById(target);
         await transition(c, "coordinador", { actor: actorName, roleLabel: roleLabelForEvent, action: "asignó coordinador: " + (coordP ? coordP.full_name : ""), setFields: { coordinador_id: target }, notify: coordP, subject: "Proceso asignado como coordinador", body: actorName + " te asignó como coordinador del proceso." });

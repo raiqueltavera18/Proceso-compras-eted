@@ -5,8 +5,8 @@
 Herramienta interna para dar seguimiento a cada solicitud de compra o
 licitación de la Gerencia de Compras de ETED (Empresa de Transmisión
 Eléctrica Dominicana), desde que la registra el área requirente hasta que se
-publica, pasando por Secretaría Administrativa, Gerencia de Compras,
-Coordinación, Análisis y Consultoría Jurídica.
+publica, pasando por Secretaría y Gerencia de Compras, Coordinación, Análisis
+y Consultoría Jurídica.
 
 ## Cómo está construida
 
@@ -83,14 +83,23 @@ README.md                Este archivo
 
 ## Cómo funciona el flujo de un proceso
 
-Cada solicitud de compra pasa, en orden, por: **Secretaría Administrativa →
-Gerencia de Compras → Coordinación → Análisis → (Consultoría Jurídica) →
-Publicación → Adjudicación → Orden de compra → Pago → Cierre**. En cualquier
-etapa previa a la publicación, quien la tiene a cargo puede **devolverla** a
-una etapa anterior con un motivo, si detecta algo que corregir — el proceso
-queda marcado como "en corrección" hasta que se vuelve a completar
-correctamente. Todo el historial (quién hizo qué y cuándo) queda registrado
-de forma permanente.
+Cada solicitud de compra pasa, en orden, por: **Secretaría y Gerencia de
+Compras → Coordinación → Análisis → (Consultoría Jurídica) → Publicación →
+Adjudicación → Orden de compra → Pago → Cierre**. En cualquier etapa previa a
+la publicación, quien la tiene a cargo puede **devolverla** a una etapa
+anterior con un motivo, si detecta algo que corregir — el proceso queda
+marcado como "en corrección" hasta que se vuelve a completar correctamente.
+Todo el historial (quién hizo qué y cuándo) queda registrado de forma
+permanente.
+
+> **Nota:** "Secretaría y Gerencia de Compras" es un solo puesto/etapa —
+> antes existían por separado "Secretaría Administrativa" y "Gerente de
+> Compras", pero se unificaron porque Secretaría siempre actuaba bajo las
+> directrices de Gerencia de todas formas. Quien tenga este puesto recibe la
+> solicitud recién creada, la revisa/archiva y asigna coordinador — con la
+> misma libertad que ya tenía Gerencia de devolver el proceso al área
+> requirente si hace falta corregir algo. Si tu proyecto de Supabase venía
+> de antes de esta unificación, ver `SETUP.md` para la migración.
 
 Una vez publicado, Gerencia de Compras da seguimiento a lo que antes se
 llevaba a mano en el Excel de Compras Menores: registra la empresa
@@ -109,9 +118,9 @@ solicitud" para corregir los datos básicos que se llenaron al registrarla
 (descripción, tipo de proceso, área requirente, solicitado por) si se
 detecta un error después de creada — en cualquier etapa, incluso si el
 proceso ya está cerrado. Solo puede usarla el Coordinador o el Analista
-mientras tengan el proceso asignado, el Gerente de Compras en cualquier
-proceso, o la administradora; cada corrección queda registrada en el
-historial del proceso.
+mientras tengan el proceso asignado, Secretaría y Gerencia de Compras en
+cualquier proceso, o la administradora; cada corrección queda registrada en
+el historial del proceso.
 
 Cualquier persona puede crear su propia cuenta desde la pantalla de
 inicio, pero queda sin ningún puesto asignado hasta que la administradora
@@ -143,9 +152,11 @@ otra persona.
 Además, cada puesto solo ve lo que le corresponde: Coordinación y Análisis
 solo ven los procesos que tienen asignados a ellos mismos, y un Área
 requirente solo ve los procesos de su propia área — el resto de los puestos
-(Secretaría, Gerencia, Jurídico, Administrador) ven todos los procesos,
-porque necesitan seguimiento del flujo completo. La tabla de permisos
-completa está en `SETUP.md`.
+(Secretaría y Gerencia de Compras, Jurídico, Administrador) ven todos los
+procesos, porque necesitan seguimiento del flujo completo. Dentro de
+"Procesos pendientes de mi acción", Secretaría y Gerencia de Compras solo ve
+los que están sin asignar o asignados a ella misma, igual que Coordinación y
+Análisis. La tabla de permisos completa está en `SETUP.md`.
 
 ## Dashboard
 
@@ -156,9 +167,9 @@ no tener que hacer mucho scroll:
 - **Resumen**: total de procesos registrados en el año en curso, total
   histórico, y un gráfico de procesos registrados por mes.
 - **Puesto y estatus**: un gráfico con el tiempo promedio que llevan ahora
-  mismo los procesos activos según quién los tiene (Secretaría, Gerencia,
-  Coordinación, Análisis, Consultoría Jurídica, o el área requirente cuando
-  un proceso está devuelto para corrección), y debajo la lista completa de
+  mismo los procesos activos según quién los tiene (Secretaría y Gerencia de
+  Compras, Coordinación, Análisis, Consultoría Jurídica, o el área requirente
+  cuando un proceso está devuelto para corrección), y debajo la lista completa de
   esos procesos — cuánto tiempo lleva cada uno ahí y la última acción
   registrada en su historial, tal cual quedó anotada. Los que llevan más de
   3 días se resaltan en rojo. Haz clic en cualquiera para ir directo a ese
@@ -183,8 +194,9 @@ con un borde de color para ubicarlo de un vistazo.
 En la parte superior, junto a tu nombre, hay una campanita 🔔 con un contador
 de avisos sin leer. Te avisa automáticamente cada vez que: se te asigna una
 acción dentro de un proceso, cambia algo en un proceso que tú registraste, o
-—si eres Coordinador o Gerente de Compras— cambia algo en un proceso que
-tienes asignado (Coordinación) o en cualquier proceso (Gerencia). Al hacer
+—si eres Coordinador o de Secretaría y Gerencia de Compras— cambia algo en
+un proceso que tienes asignado (Coordinación) o en cualquier proceso
+(Secretaría y Gerencia de Compras). Al hacer
 clic en un aviso, te marca ese aviso como leído y te lleva directo a la
 tarjeta del proceso correspondiente. Por ahora esta bandeja vive únicamente
 dentro de la aplicación — ver la sección de abajo sobre correos.
