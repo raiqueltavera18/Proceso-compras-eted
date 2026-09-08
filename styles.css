@@ -392,6 +392,28 @@ ol.timeline li.event::before{ content:""; position:absolute; left:-18px; top:5px
 .dot-licitacion{ background:var(--brand); }
 .dot-menor{ background:var(--info); }
 
+.status-list{ list-style:none; margin:0; padding:0; }
+.status-row{ display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:9px 4px; border-bottom:1px solid var(--line); cursor:pointer; border-radius:var(--radius-sm); }
+.status-row:last-child{ border-bottom:none; }
+.status-row:hover{ background:var(--surface-sunken); }
+.status-main{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.status-title{ font-size:13px; color:var(--ink); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.status-puesto{ font-size:11.5px; color:var(--brand); }
+.status-side{ display:flex; flex-direction:column; align-items:flex-end; gap:2px; flex-shrink:0; text-align:right; max-width:320px; }
+.status-time{ font-size:12.5px; font-weight:700; color:var(--ink); }
+.status-time.stuck{ color:var(--critical); }
+.status-action{ font-size:11.5px; color:var(--ink-soft); }
+
+details.area-detail{ border-bottom:1px solid var(--line); padding:9px 4px; }
+details.area-detail:last-child{ border-bottom:none; }
+details.area-detail > summary{ cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; gap:14px; }
+details.area-detail > summary::-webkit-details-marker{ display:none; }
+details.area-detail > summary::before{ content:"▸ "; color:var(--ink-faint); }
+details.area-detail[open] > summary::before{ content:"▾ "; }
+.area-detail-name{ font-size:13px; font-weight:600; color:var(--ink); }
+.area-detail-stats{ display:flex; gap:16px; font-size:12px; color:var(--ink-soft); flex-shrink:0; }
+.area-detail-body{ padding:10px 0 0 14px; }
+
 /* ------------------------------------------------------------ auth gate -- */
 .auth-shell{ min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--surface); padding:20px; }
 .auth-box{ width:100%; max-width:380px; background:var(--surface-raised); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-pop); padding:28px 26px; }

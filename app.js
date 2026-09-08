@@ -1620,6 +1620,7 @@
   var DASH_MONTH_LABELS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
   var DASH_SUBTABS = [
     { key: "resumen", label: "Resumen" },
+    { key: "estatus", label: "Puesto y estatus" },
     { key: "coordinacion", label: "Por coordinación" },
     { key: "areas", label: "Áreas" },
     { key: "presupuesto", label: "Presupuesto" },
@@ -1686,9 +1687,13 @@
     var csvHistBtn = $("#export-csv-btn", box);
     if (csvCasesBtn) csvCasesBtn.addEventListener("click", exportCasesCSV);
     if (csvHistBtn) csvHistBtn.addEventListener("click", exportHistoryCSV);
+    $$("[data-case-id]", box).forEach(function (el) {
+      el.addEventListener("click", function () { goToCase(el.getAttribute("data-case-id")); });
+    });
   }
 
   function renderDashboardSubtabContent(sub, stats, d) {
+    if (sub === "estatus") return renderDashboardEstatus();
     if (sub === "coordinacion") return renderDashboardCoordinacion(d);
     if (sub === "areas") return renderDashboardAreas(d);
     if (sub === "presupuesto") return renderDashboardPresupuesto(d);
@@ -1722,10 +1727,115 @@
       "</div></div>";
   }
 
+  // Puesto donde está cada proceso ACTIVO ahora mismo, cuánto tiempo lleva
+  // ahí, y la última acción registrada tal cual quedó en su historial — para
+  // saber de un vistazo quién tiene cada proceso trabado y desde cuándo.
+  function computeStatusBoard() {
+    var now = Date.now();
+    var rows = state.cases.filter(function (c) { return !isTerminalStage(c.stage); }).map(function (c) {
+      var events = eventsForCase(c.id);
+      var lastEv = events.length ? events[events.length - 1] : null;
+      var since = lastEv ? new Date(lastEv.ts).getTime() : new Date(c.created_at).getTime();
+      var stageInfo = STAGES[c.stage] || {};
+      var isAreaHold = c.stage === "area-correccion";
+      var puestoGroup = isAreaHold ? "Área requirente" : (stageInfo.label || c.stage);
+      var puestoDetail = isAreaHold ? ("Área requirente — " + (areaName(c.area_id) || "área no asignada")) : (stageInfo.label || c.stage);
+      return {
+        caseId: c.id, title: c.title, puestoGroup: puestoGroup, puesto: puestoDetail,
+        ms: Math.max(0, now - since),
+        status: lastEv ? lastEv.action : "Registrada — todavía sin movimientos"
+      };
+    }).sort(function (a, b) { return b.ms - a.ms; });
+
+    var byPuesto = {};
+    rows.forEach(function (r) { (byPuesto[r.puestoGroup] = byPuesto[r.puestoGroup] || []).push(r.ms); });
+    var puestoAverages = Object.keys(byPuesto).map(function (k) {
+      var arr = byPuesto[k];
+      var avgMs = arr.reduce(function (a, b) { return a + b; }, 0) / arr.length;
+      return { label: k + " (" + arr.length + ")", ms: avgMs };
+    }).sort(function (a, b) { return b.ms - a.ms; });
+
+    return { rows: rows, puestoAverages: puestoAverages };
+  }
+
+  function renderDashboardEstatus() {
+    var board = computeStatusBoard();
+    return '<div class="card"><div class="card-title">Tiempo promedio actual por puesto</div><div class="card-pad">' +
+      renderBars(board.puestoAverages) +
+      "</div></div>" +
+      '<div class="card" style="margin-top:16px;"><div class="card-title">Procesos activos — puesto y estatus (' + board.rows.length + ')</div><div class="card-pad">' +
+      renderStatusList(board.rows) +
+      "</div></div>";
+  }
+
+  function renderStatusList(rows) {
+    if (!rows.length) return '<p class="chart-empty">No hay procesos activos en este momento.</p>';
+    return '<ul class="status-list">' + rows.map(function (r) {
+      return '<li class="status-row" data-case-id="' + r.caseId + '" title="Ver este proceso en \'Procesos en curso\'">' +
+        '<div class="status-main"><span class="status-title">' + esc(r.title) + '</span><span class="status-puesto">' + esc(r.puesto) + "</span></div>" +
+        '<div class="status-side"><span class="status-time num' + (r.ms > STUCK_MS ? " stuck" : "") + '">' + fmtDuration(r.ms) + '</span><span class="status-action">' + esc(r.status) + "</span></div>" +
+        "</li>";
+    }).join("") + "</ul>";
+  }
+
+  // Un renglón por área con su detalle completo (no solo el top 10): total
+  // de procesos, promedio hasta publicar, y los procesos activos de esa área
+  // con más tiempo en curso — para dar seguimiento área por área.
+  function computeAreaDetailList() {
+    var now = Date.now();
+    var byArea = {};
+    state.areas.forEach(function (a) { byArea[a.id] = { id: a.id, name: a.name, total: 0, publishDurations: [], activeList: [] }; });
+    state.cases.forEach(function (c) {
+      var bucket = byArea[c.area_id];
+      if (!bucket) bucket = byArea[c.area_id] = { id: c.area_id, name: areaName(c.area_id) || "(área eliminada)", total: 0, publishDurations: [], activeList: [] };
+      bucket.total++;
+      if (hasBeenPublished(c)) {
+        var events = eventsForCase(c.id);
+        var pubEv = events.filter(function (e) { return e.stage_held === "publicado"; })[0];
+        var lastEv = pubEv || events[events.length - 1];
+        var created = new Date(c.created_at).getTime();
+        var endTs = lastEv ? new Date(lastEv.ts).getTime() : now;
+        bucket.publishDurations.push(endTs - created);
+      }
+      if (!isTerminalStage(c.stage)) {
+        bucket.activeList.push({ id: c.id, title: c.title, ms: now - new Date(c.created_at).getTime() });
+      }
+    });
+    function avg(arr) { return arr.length ? arr.reduce(function (a, b) { return a + b; }, 0) / arr.length : 0; }
+    return Object.keys(byArea).map(function (id) {
+      var b = byArea[id];
+      return {
+        id: b.id, name: b.name, total: b.total, avgPublishMs: avg(b.publishDurations),
+        slowest: b.activeList.sort(function (x, y) { return y.ms - x.ms; }).slice(0, 5)
+      };
+    }).sort(function (a, b) { return b.total - a.total; });
+  }
+
   function renderDashboardAreas(d) {
+    var areaDetail = computeAreaDetailList();
     return '<div class="card"><div class="card-title">Top 10 áreas con más procesos registrados</div><div class="card-pad">' +
       renderCountBars(d.topAreas) +
+      "</div></div>" +
+      '<div class="card" style="margin-top:16px;"><div class="card-title">Detalle por área (' + areaDetail.length + ")</div><div class=\"card-pad\">" +
+      renderAreaDetailList(areaDetail) +
       "</div></div>";
+  }
+
+  function renderAreaDetailList(list) {
+    if (!list.length) return '<p class="chart-empty">Aún no hay áreas requirentes registradas.</p>';
+    return list.map(function (a) {
+      return '<details class="area-detail"><summary><span class="area-detail-name">' + esc(a.name) + '</span>' +
+        '<span class="area-detail-stats"><span>' + a.total + " proceso" + (a.total === 1 ? "" : "s") + '</span><span>' + (a.avgPublishMs ? fmtDuration(a.avgPublishMs) : "—") + " prom. hasta publicar</span></span></summary>" +
+        '<div class="area-detail-body">' + renderAreaSlowestList(a.slowest) + "</div></details>";
+    }).join("");
+  }
+
+  function renderAreaSlowestList(slowest) {
+    if (!slowest.length) return '<p class="hint">Esta área no tiene procesos activos en este momento.</p>';
+    return '<p class="hint" style="margin-bottom:8px;">Procesos activos con más tiempo en curso:</p><ul class="status-list">' + slowest.map(function (s) {
+      return '<li class="status-row" data-case-id="' + s.id + '"><div class="status-main"><span class="status-title">' + esc(s.title) + '</span></div>' +
+        '<div class="status-side"><span class="status-time num' + (s.ms > STUCK_MS ? " stuck" : "") + '">' + fmtDuration(s.ms) + "</span></div></li>";
+    }).join("") + "</ul>";
   }
 
   function renderDashboardPresupuesto(d) {
@@ -1794,7 +1904,7 @@
     if (!list.length) return '<p class="chart-empty">Todavía no hay suficiente información para calcular esto.</p>';
     var max = Math.max.apply(null, list.map(function (x) { return x.count; })) || 1;
     return list.map(function (x, i) {
-      return '<div class="bar-row"><div class="name">' + (i + 1) + ". " + esc(x.label) + '</div><div class="bar-track"><div class="bar-fill" style="width:' + Math.max(4, Math.round((100 * x.count) / max)) + '%"></div></div><div class="val num">' + x.count + "</div></div>";
+      return '<div class="bar-row"><div class="name" title="' + esc(x.label) + '">' + (i + 1) + ". " + esc(x.label) + '</div><div class="bar-track"><div class="bar-fill" style="width:' + Math.max(4, Math.round((100 * x.count) / max)) + '%"></div></div><div class="val num">' + x.count + "</div></div>";
     }).join("");
   }
 
@@ -1802,7 +1912,7 @@
     if (!list.length) return '<p class="chart-empty">Todavía no hay suficiente historial para calcular esto.</p>';
     var max = Math.max.apply(null, list.map(function (x) { return x.ms; })) || 1;
     return list.map(function (x, i) {
-      return '<div class="bar-row' + (i === 0 ? " bottleneck" : "") + '"><div class="name">' + esc(x.label) + '</div><div class="bar-track"><div class="bar-fill" style="width:' + Math.max(4, Math.round((100 * x.ms) / max)) + '%"></div></div><div class="val num">' + fmtDuration(x.ms) + "</div></div>";
+      return '<div class="bar-row' + (i === 0 ? " bottleneck" : "") + '"><div class="name" title="' + esc(x.label) + '">' + esc(x.label) + '</div><div class="bar-track"><div class="bar-fill" style="width:' + Math.max(4, Math.round((100 * x.ms) / max)) + '%"></div></div><div class="val num">' + fmtDuration(x.ms) + "</div></div>";
     }).join("");
   }
   function renderAreaSummaryTable(list) {

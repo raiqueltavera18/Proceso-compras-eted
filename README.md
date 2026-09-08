@@ -155,9 +155,21 @@ no tener que hacer mucho scroll:
 
 - **Resumen**: total de procesos registrados en el año en curso, total
   histórico, y un gráfico de procesos registrados por mes.
+- **Puesto y estatus**: un gráfico con el tiempo promedio que llevan ahora
+  mismo los procesos activos según quién los tiene (Secretaría, Gerencia,
+  Coordinación, Análisis, Consultoría Jurídica, o el área requirente cuando
+  un proceso está devuelto para corrección), y debajo la lista completa de
+  esos procesos — cuánto tiempo lleva cada uno ahí y la última acción
+  registrada en su historial, tal cual quedó anotada. Los que llevan más de
+  3 días se resaltan en rojo. Haz clic en cualquiera para ir directo a ese
+  proceso en "Procesos en curso".
 - **Por coordinación**: total de procesos de Licitaciones vs. Compras
   menores (histórico), y ese mismo desglose mes a mes.
-- **Áreas**: las 10 áreas requirentes con más procesos registrados.
+- **Áreas**: las 10 áreas requirentes con más procesos registrados, y debajo
+  el detalle de **todas** las áreas (no solo las 10 primeras): cuántos
+  procesos tiene cada una, su tiempo promedio hasta publicar, y — al hacer
+  clic para desplegarla — la lista de sus procesos activos con más tiempo
+  en curso.
 - **Presupuesto**: los 10 procesos con mayor monto presupuestado y su área.
 - **Tiempos**: los gráficos originales de tiempo promedio por etapa y por
   área, la tabla de procesos por área requirente, y los botones para
