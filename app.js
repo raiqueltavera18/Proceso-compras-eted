@@ -1153,6 +1153,20 @@
     var stuck = !closed && (Date.now() - lastTs) > STUCK_MS;
     var attachments = attachmentsForCase(c.id);
 
+    // Si lo último que le pasó al proceso trae una nota (casi siempre una
+    // devolución con su motivo), se muestra en un recuadro visible arriba —
+    // antes solo aparecía escondido dentro de "Historial", y quien tenía que
+    // corregir algo no se enteraba de por qué sin abrirlo.
+    var lastEvent = events.length ? events[events.length - 1] : null;
+    var returnNoteHTML = "";
+    if (lastEvent && lastEvent.note && !closed) {
+      var isReturn = /^devolvió el proceso/.test(lastEvent.action || "");
+      returnNoteHTML = '<div class="return-note-box">' +
+        '<p class="return-note-title">' + (isReturn ? "↩ Devuelto por " + esc(lastEvent.actor_name || "") : "📝 Nota de " + esc(lastEvent.actor_name || "")) + "</p>" +
+        '<p class="return-note-text">' + esc(lastEvent.note) + "</p>" +
+        "</div>";
+    }
+
     var closedNote = "";
     if (c.stage === "publicado") closedNote = '<p class="hint" style="margin-top:10px;">Publicado el ' + fmtDateTime(events[events.length - 1] ? events[events.length - 1].ts : c.updated_at) + '. Continúa en el Portal Transaccional de la DGCP — falta registrar la adjudicación.</p>';
     if (c.stage === "adjudicado") closedNote = '<p class="hint" style="margin-top:10px;">Adjudicado' + (c.empresa_adjudicada ? " a <strong>" + esc(c.empresa_adjudicada) + "</strong>" : "") + (c.monto_adjudicado != null ? " por RD$ " + fmtMoney(c.monto_adjudicado) : "") + '. Falta registrar la orden de compra.</p>';
@@ -1172,6 +1186,7 @@
       "</div>" +
       '<div class="case-area">' + esc(areaName(c.area_id)) + (!c.analista_id && c.analista_legado ? " · Analista (histórico): " + esc(c.analista_legado) : "") + "</div>" +
       "</div></div>" +
+      returnNoteHTML +
       '<div class="case-timers">' +
       '<div class="timer' + (stuck ? " stuck" : "") + ' js-timer-stage" data-since="' + lastTs + '" data-closed="' + (closed ? "1" : "0") + '"><span class="num">…</span> en etapa actual</div>' +
       '<div class="timer js-timer-total" data-since="' + created + '" data-until="' + (closed ? lastTs : "") + '"><span class="num">…</span> transcurridas en total</div>' +

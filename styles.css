@@ -309,6 +309,10 @@ ol.timeline li.event::before{ content:""; position:absolute; left:-18px; top:5px
 .devolver-box{ margin-top:13px; padding-top:12px; border-top:1px dashed var(--critical); }
 .devolver-title{ font-size:12px; color:var(--critical); font-weight:700; margin-bottom:8px; }
 
+.return-note-box{ margin-top:10px; padding:9px 12px; background:var(--warning-soft); border-left:3px solid var(--warning); border-radius:0 var(--radius-sm) var(--radius-sm) 0; }
+.return-note-title{ font-size:11px; font-weight:700; color:var(--warning); text-transform:uppercase; letter-spacing:.02em; margin-bottom:3px; }
+.return-note-text{ font-size:13px; color:var(--ink); line-height:1.4; }
+
 /* --------------------------------------------------------------- misc --- */
 .area-list{ display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px; }
 .area-chip-wrap{
