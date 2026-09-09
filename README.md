@@ -216,6 +216,39 @@ la Microsoft Graph API con credenciales guardadas de forma segura del lado
 del servidor — nunca directamente en esta página, ya que es pública. Es un
 paso natural para dar una vez el resto de Procomly esté en uso.
 
+## Chat — solo durante la etapa de prueba
+
+Mientras Procomly esté en período de prueba, la pestaña "Chat" agrega dos
+cosas pensadas para ese momento y **no para quedarse para siempre**:
+
+- **Chat general**: una sola sala compartida donde cualquiera con un puesto
+  asignado (menos Observador, que es de solo lectura) puede escribir y leer
+  mensajes, para comentar dudas o avisos del día a día mientras el equipo se
+  acostumbra a la aplicación. No es un chat por proceso — es uno solo, para
+  todos.
+- **Todos los procesos**: una lista de lo último que se ha hecho en
+  cualquier proceso del sistema (quién, qué acción, en qué proceso), no
+  solo los que a cada persona le tocan normalmente. Es distinta de
+  "Actividad reciente" en Inicio — esa sigue mostrando, como siempre, solo
+  lo que le corresponde ver a cada quien; "Todos los procesos" es
+  deliberadamente más amplia, y solo mientras dure la prueba.
+
+Los mensajes y el historial de "Todos los procesos" **no afectan en nada**
+a "Procesos en curso" ni al resto de la aplicación — cada Coordinador,
+Analista, etc. sigue viendo únicamente lo suyo en todas las demás
+pantallas, exactamente igual que antes. El chat se actualiza con el mismo
+mecanismo que el resto de Procomly (cada 60 segundos o al pulsar
+"Actualizar"), no en tiempo real.
+
+Como es algo pensado solo para la prueba, la administradora tiene un
+interruptor para apagarlo con un clic en **Áreas y usuarios → 🧪 Modo de
+prueba**, sin tocar código ni Supabase. Al apagarlo, "Chat" desaparece del
+menú para todos los demás (los mensajes no se borran, solo se ocultan); la
+administradora sigue viendo la pestaña para poder revisar el historial o
+volver a activarlo cuando quiera. También puede borrar mensajes puntuales
+del chat en cualquier momento (por ejemplo, si alguien escribe algo por
+error), desde el mismo chat.
+
 ## ¿Preguntas?
 
 Revisa primero `SETUP.md` — cubre la creación del proyecto, la conexión y

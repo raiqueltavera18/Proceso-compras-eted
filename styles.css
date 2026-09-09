@@ -313,6 +313,24 @@ ol.timeline li.event::before{ content:""; position:absolute; left:-18px; top:5px
 .return-note-title{ font-size:11px; font-weight:700; color:var(--warning); text-transform:uppercase; letter-spacing:.02em; margin-bottom:3px; }
 .return-note-text{ font-size:13px; color:var(--ink); line-height:1.4; }
 
+/* --------------------------------------------------------- chat/prueba --- */
+.testing-banner{ background:var(--warning-soft); color:var(--ink); border-left:3px solid var(--warning); padding:10px 14px; border-radius:0 var(--radius-sm) var(--radius-sm) 0; font-size:12.5px; margin-bottom:16px; }
+.chat-messages{ display:flex; flex-direction:column; gap:10px; padding:14px; background:var(--surface-sunken); border-radius:var(--radius-sm); height:min(60vh,520px); overflow-y:auto; }
+.chat-empty{ color:var(--ink-faint); font-size:13px; text-align:center; margin:auto; }
+.chat-msg{ max-width:75%; align-self:flex-start; background:var(--surface-raised); border:1px solid var(--line); border-radius:12px 12px 12px 2px; padding:8px 12px; }
+.chat-msg.mine{ align-self:flex-end; background:var(--brand); border-color:var(--brand); border-radius:12px 12px 2px 12px; }
+.chat-msg.mine .chat-msg-author, .chat-msg.mine .chat-msg-time{ color:rgba(255,255,255,.8); }
+.chat-msg.mine .chat-msg-body{ color:#fff; }
+.chat-msg-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:2px; }
+.chat-msg-author{ font-size:11px; font-weight:700; color:var(--brand); }
+.chat-msg.mine .chat-msg-head .chat-msg-author{ color:rgba(255,255,255,.85); }
+.chat-msg-delete{ appearance:none; background:none; border:none; color:inherit; opacity:.55; cursor:pointer; font-size:14px; line-height:1; padding:0 2px; }
+.chat-msg-delete:hover{ opacity:1; }
+.chat-msg-body{ font-size:13.5px; color:var(--ink); white-space:pre-wrap; word-break:break-word; line-height:1.4; }
+.chat-msg-time{ font-size:10.5px; color:var(--ink-faint); margin-top:4px; }
+.chat-compose{ display:flex; gap:8px; margin-top:12px; align-items:flex-start; }
+.chat-compose .field{ flex:1; }
+
 /* --------------------------------------------------------------- misc --- */
 .area-list{ display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px; }
 .area-chip-wrap{

@@ -158,9 +158,9 @@ su contraseña:
 
 1. Entra a **"Áreas y usuarios" → "Invitar persona"**.
 2. Escribe el correo real de la persona, su nombre (opcional), marca su
-   puesto (Secretaría, Gerencia, Coordinador, Analista, Jurídico, o Área
-   requirente con su área correspondiente) y si va a ser administradora.
-   Haz clic en **Invitar**.
+   puesto (Secretaría y Gerencia de Compras, Coordinador, Analista,
+   Jurídico, o Área requirente con su área correspondiente) y si va a ser
+   administradora. Haz clic en **Invitar**.
 3. Avísale tú misma a esa persona — por correo, WhatsApp, como prefieras —
    que entre a Procomly y cree su cuenta ("Crear cuenta") usando **ese mismo
    correo**. En cuanto lo haga, automáticamente queda con el puesto y los
@@ -191,8 +191,7 @@ permita.
 | Puesto | Qué procesos ve | Puede crear una solicitud nueva | Puede actuar (avanzar / devolver) | Adjuntar archivos | Áreas y usuarios |
 |---|---|---|---|---|---|
 | **Administrador** | Todos, sin excepción | Sí, para cualquier área | Sí, en cualquier etapa (queda registrado a su propio nombre) | Sí, en cualquier proceso | Crear/editar áreas, invitar personas, asignar cualquier puesto (incluido administrador) |
-| **Secretaría Administrativa** | Todos | No | Solo cuando el proceso está en la etapa "Secretaría" | Sí, en los procesos que ve | Solo puede ver el directorio (lectura) |
-| **Gerencia de Compras** | Todos | No | Solo en las etapas "Gerencia", "Publicación", y todo el seguimiento posterior a la publicación (adjudicar, declarar desierto, registrar orden de compra, marcar pagado y cerrar) | Sí, en los procesos que ve | Solo lectura |
+| **Secretaría y Gerencia de Compras** | Todos | No | Solo en las etapas "Secretaría y Gerencia de Compras" y "Publicación", y todo el seguimiento posterior a la publicación (adjudicar, declarar desierto, registrar orden de compra, marcar pagado y cerrar) — en "Procesos pendientes de mi acción" solo ve los que están sin asignar o asignados a ella misma | Sí, en los procesos que ve | Solo lectura |
 | **Coordinador** | Solo los procesos que tiene asignados a él/ella | No | Solo en la etapa "Coordinador", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
 | **Analista** | Solo los procesos que tiene asignados a él/ella | No | Solo en las etapas "Analista" y "Corrección", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
 | **Consultoría Jurídica** | Todos | No | Solo en la etapa "Jurídico" | Sí, en los procesos que ve | Solo lectura |
@@ -574,9 +573,9 @@ Después de correrlo, sube también los archivos `app.js`, `styles.css` y
 `supabase-schema.sql` actualizados a tu repositorio de GitHub (reemplazando
 los que ya tenías). La campanita te avisará, de ahora en adelante, cada vez
 que se te asigne una acción en un proceso, cuando cambie algo en un proceso
-que tú registraste, o (si eres Gerente de Compras) cualquier cambio en
-cualquier proceso — todavía **solo dentro de la aplicación**, no por
-correo.
+que tú registraste, o (si eres de Secretaría y Gerencia de Compras)
+cualquier cambio en cualquier proceso — todavía **solo dentro de la
+aplicación**, no por correo.
 
 **Ya tenía mi proyecto creado antes de poder desactivar cuentas — ¿cómo lo actualizo?**
 Si en el Directorio de usuarios ("Áreas y usuarios") no ves el botón
@@ -656,6 +655,254 @@ usuarios), pero no puede crear, editar, avanzar ni borrar nada — todos los
 botones de acción le quedan bloqueados, y la base de datos rechaza
 cualquier intento de todas formas aunque alguien intentara saltarse la
 pantalla.
+
+**Un proceso cambia de etapa pero no queda ningún registro de por qué (el motivo de una devolución desaparece) — ¿cómo lo arreglo?**
+Esto es un error real de seguridad en versiones anteriores del esquema, no
+un problema de tus datos: cuando alguien devolvía un proceso (o hacía
+cualquier otra transición hacia una etapa que ya no era la suya), a veces
+la base de datos guardaba el cambio de etapa pero rechazaba en silencio el
+evento que explica qué pasó y por qué — el proceso sí se movía, pero sin
+dejar ningún rastro del motivo. Corre esto una sola vez en el **SQL
+Editor** de tu proyecto — es seguro, no borra ni modifica ningún proceso
+ni ninguna cuenta que ya tengas:
+
+```sql
+create or replace function public.can_log_case_event(target_case_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.cases c
+    where c.id = target_case_id
+      and (
+        public.is_admin()
+        or public.has_role('secretaria')
+        or public.has_role('gerente')
+        or public.has_role('juridico')
+        or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+        or (public.has_role('analista') and c.analista_id = auth.uid())
+        or (public.has_role('area') and c.area_id = public.my_area_id())
+      )
+  );
+$$;
+
+drop policy if exists "case_events_insert_if_can_act_on_case" on public.case_events;
+
+create policy "case_events_insert_if_can_act_on_case"
+  on public.case_events for insert
+  to authenticated
+  with check (
+    actor_id = auth.uid()
+    and public.can_log_case_event(case_id)
+  );
+```
+
+Después de correrlo, sube también `app.js` y `styles.css` actualizados a
+tu repositorio — ese motivo ahora aparece en un recuadro visible arriba de
+los botones de acción de cada proceso, en vez de solo dentro de
+"Historial". Los procesos que ya perdieron su motivo (como los que hayas
+probado antes de este arreglo) no lo recuperan retroactivamente — no
+quedó guardado en ningún lado —, pero de aquí en adelante ya no volverá a
+pasar.
+
+**Se unificaron los puestos "Secretaría Administrativa" y "Gerente de Compras" — ¿cómo actualizo mi proyecto?**
+Secretaría Administrativa actuaba siempre bajo las directrices de Gerencia
+de Compras, así que ambos puestos/etapas se unificaron en uno solo:
+"Secretaría y Gerencia de Compras" (por dentro sigue siendo el puesto
+`gerente` de siempre). Quien lo tenga recibe la solicitud recién creada,
+la revisa/archiva, confirma si es Compra menor o Licitación, y asigna
+coordinador — con la misma libertad que ya tenía Gerencia de devolver el
+proceso al área requirente si hace falta corregir algo. Igual que
+Coordinador y Analista, en "Procesos pendientes de mi acción" solo ve los
+procesos sin asignar o asignados a ella misma, nunca los de otra persona
+del mismo puesto.
+
+Corre esto una sola vez en el **SQL Editor** de tu proyecto — es seguro,
+no borra ningún proceso ni ninguna cuenta que ya tengas; solo actualiza a
+quién le corresponde actuar y migra lo que siga en la etapa vieja:
+
+```sql
+-- 1) Ya no se puede "devolver" un proceso a la etapa "secretaria" (se
+--    unificó con "gerente"); se deja como ORIGEN válido nada más, por si
+--    algún proceso viejo sigue ahí, para que pueda seguir avanzando.
+create or replace function public.enforce_case_transition()
+returns trigger
+language plpgsql
+as $$
+declare
+  allowed text[];
+begin
+  if public.is_admin() then
+    return new;
+  end if;
+
+  if old.stage = new.stage then
+    return new;
+  end if;
+
+  allowed := case old.stage
+    when 'secretaria'      then array['gerente','cancelado']
+    when 'gerente'         then array['coordinador','area-correccion','cancelado']
+    when 'coordinador'     then array['analista','gerente','area-correccion','cancelado']
+    when 'analista'        then array['juridico','gerente','coordinador','area-correccion','cancelado']
+    when 'correccion'      then array['juridico','area-correccion','cancelado']
+    when 'area-correccion' then array['analista','cancelado']
+    when 'juridico'        then array['publicacion','gerente','coordinador','analista','area-correccion','cancelado']
+    when 'publicacion'     then array['publicado','cancelado']
+    when 'publicado'       then array['adjudicado','desierto','cancelado']
+    when 'adjudicado'      then array['pendiente-pago','cancelado']
+    when 'pendiente-pago'  then array['cerrado']
+    else array[]::text[]
+  end;
+
+  if not (new.stage = any(allowed)) then
+    raise exception 'Transición de etapa no permitida: % -> %', old.stage, new.stage;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- 2) Los procesos nuevos entran directo a "gerente" (ya no existe una
+--    etapa "secretaria" intermedia).
+alter table public.cases alter column stage set default 'gerente';
+
+-- 3) Migra los datos existentes: cualquier perfil con el puesto
+--    "secretaria" pasa a tener "gerente" (sin duplicarlo si ya tenía
+--    ambos), y cualquier proceso que siguiera en la etapa "secretaria"
+--    pasa a "gerente" (conservando a quién lo tenía asignado), dejando un
+--    registro en su historial explicando por qué cambió.
+do $$
+declare
+  migrated_case_ids uuid[];
+begin
+  update public.profiles
+  set roles = (
+    select array_agg(distinct r order by r)
+    from unnest(array_replace(roles, 'secretaria', 'gerente')) as r
+  )
+  where 'secretaria' = any(roles);
+
+  select array_agg(id) into migrated_case_ids
+  from public.cases
+  where stage = 'secretaria';
+
+  update public.cases
+  set gerente_id = coalesce(gerente_id, secretaria_id),
+      stage = 'gerente',
+      updated_at = now()
+  where stage = 'secretaria';
+
+  if migrated_case_ids is not null then
+    insert into public.case_events (case_id, stage_held, actor_id, actor_name, role_label, action, note, duration_ms)
+    select c_id, 'gerente', null, 'Sistema', 'Migración automática',
+           'pasó automáticamente de "Secretaría Administrativa" a "Secretaría y Gerencia de Compras"',
+           'Los puestos "Secretaría Administrativa" y "Gerente de Compras" se unificaron en uno solo.',
+           0
+    from unnest(migrated_case_ids) as c_id;
+  end if;
+end $$;
+```
+
+Después de correrlo, sube también `app.js` y `styles.css` actualizados a
+tu repositorio de GitHub. Si tenías a alguien con el puesto "Secretaría
+Administrativa" únicamente, ahora la verás en el directorio con el puesto
+"Secretaría y Gerencia de Compras" — no hace falta que vuelvas a asignarle
+nada a mano.
+
+**¿Cómo agrego el chat de prueba a un proyecto que ya tenía creado?**
+Si actualizaste el código pero en "Chat" te sale "permission denied" o la
+pestaña ni aparece, es porque tu proyecto de Supabase todavía no tiene las
+tablas y funciones nuevas. Corre esto una sola vez en el **SQL Editor** de
+tu proyecto — es seguro, no borra ni modifica ningún proceso que ya tengas:
+
+```sql
+create table if not exists public.app_settings (
+  key         text primary key,
+  value       boolean not null default false,
+  updated_at  timestamptz not null default now()
+);
+comment on table public.app_settings is 'Interruptores generales de la aplicación, editables solo por la administradora.';
+
+insert into public.app_settings (key, value) values ('testing_features_enabled', true)
+  on conflict (key) do nothing;
+
+create table if not exists public.chat_messages (
+  id           uuid primary key default gen_random_uuid(),
+  author_id    uuid references public.profiles (id),
+  author_name  text not null default '',
+  body         text not null,
+  created_at   timestamptz not null default now()
+);
+
+alter table public.app_settings enable row level security;
+alter table public.chat_messages enable row level security;
+
+grant select, insert, update, delete on public.app_settings to anon, authenticated;
+grant select, insert, update, delete on public.chat_messages to anon, authenticated;
+
+create or replace function public.testing_features_enabled()
+returns boolean language sql security definer set search_path = public stable as $$
+  select coalesce((select value from public.app_settings where key = 'testing_features_enabled'), false);
+$$;
+
+create or replace function public.can_write_chat()
+returns boolean language sql security definer set search_path = public stable as $$
+  select coalesce((
+    select p.is_admin or exists (select 1 from unnest(p.roles) r where r <> 'observador')
+    from public.profiles p
+    where p.id = auth.uid() and p.active
+  ), false);
+$$;
+
+create or replace function public.recent_activity_feed(p_limit int default 150)
+returns table (
+  case_id uuid, case_number bigint, case_title text, ts timestamptz,
+  actor_name text, role_label text, action text, note text
+)
+language sql security definer set search_path = public stable as $$
+  select e.case_id, c.case_number, c.title, e.ts, e.actor_name, e.role_label, e.action, e.note
+  from public.case_events e
+  join public.cases c on c.id = e.case_id
+  where public.testing_features_enabled() or public.is_admin()
+  order by e.ts desc
+  limit greatest(1, least(coalesce(p_limit, 150), 500));
+$$;
+
+grant execute on function public.recent_activity_feed(int) to authenticated;
+
+drop policy if exists "app_settings_select_authenticated" on public.app_settings;
+create policy "app_settings_select_authenticated" on public.app_settings for select to authenticated using (true);
+
+drop policy if exists "app_settings_write_admin_only" on public.app_settings;
+create policy "app_settings_write_admin_only" on public.app_settings for all
+  to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "chat_messages_select_while_enabled" on public.chat_messages;
+create policy "chat_messages_select_while_enabled" on public.chat_messages for select
+  to authenticated using (public.testing_features_enabled() or public.is_admin());
+
+drop policy if exists "chat_messages_insert_while_enabled" on public.chat_messages;
+create policy "chat_messages_insert_while_enabled" on public.chat_messages for insert
+  to authenticated with check (
+    author_id = auth.uid()
+    and public.can_write_chat()
+    and public.testing_features_enabled()
+  );
+
+drop policy if exists "chat_messages_delete_admin_only" on public.chat_messages;
+create policy "chat_messages_delete_admin_only" on public.chat_messages for delete
+  to authenticated using (public.is_admin());
+```
+
+Después de correrlo, sube también `app.js`, `styles.css` y
+`supabase-schema.sql` actualizados a tu repositorio de GitHub. La pestaña
+"Chat" aparecerá activada por defecto para todo el que tenga un puesto
+asignado (menos Observador); puedes apagarla en cualquier momento desde
+"Áreas y usuarios" → "🧪 Modo de prueba", como se explica en el `README.md`.
 
 **Cuenta de demostración compartida (un solo correo para varios probadores)**
 Para que varias personas revisen Procomly sin tener que invitar a cada una

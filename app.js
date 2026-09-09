@@ -228,9 +228,14 @@
         sb.from("cases").select("*").order("created_at"),
         sb.from("case_events").select("*").order("ts"),
         sb.from("attachments").select("*").order("created_at"),
-        myId ? sb.from("notifications").select("*").eq("recipient_id", myId).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null })
+        myId ? sb.from("notifications").select("*").eq("recipient_id", myId).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
+        sb.from("chat_messages").select("*").order("created_at").limit(300),
+        sb.from("app_settings").select("*"),
+        sb.rpc("recent_activity_feed", { p_limit: 150 })
       ]);
       results.forEach(function (r) { if (r.error) throw r.error; });
+      var settings = {};
+      (results[8].data || []).forEach(function (row) { settings[row.key] = row.value; });
       return {
         profiles: results[0].data || [],
         pendingProfiles: results[1].data || [],
@@ -238,7 +243,10 @@
         cases: results[3].data || [],
         events: results[4].data || [],
         attachments: results[5].data || [],
-        notifications: results[6].data || []
+        notifications: results[6].data || [],
+        chatMessages: results[7].data || [],
+        appSettings: settings,
+        activityFeed: results[9].data || []
       };
     },
     async markNotificationRead(id) {
@@ -346,6 +354,21 @@
     async logNotification(toEmail, toName, subject, body, caseId) {
       try { await sb.from("notifications_log").insert({ to_email: toEmail || "", to_name: toName || "", subject: subject, body: body || "", case_id: caseId || null }); }
       catch (e) { /* la bitácora de notificaciones es solo informativa — nunca bloquea la acción principal */ }
+    },
+
+    // ---- chat general y feed de "Actividad reciente" (solo etapa de prueba) ----
+    async sendChatMessage(authorId, authorName, body) {
+      var r = await sb.from("chat_messages").insert({ author_id: authorId, author_name: authorName, body: body }).select().single();
+      if (r.error) throw r.error;
+      return r.data;
+    },
+    async deleteChatMessage(id) {
+      var r = await sb.from("chat_messages").delete().eq("id", id);
+      if (r.error) throw r.error;
+    },
+    async updateSetting(key, value) {
+      var r = await sb.from("app_settings").upsert({ key: key, value: value, updated_at: new Date().toISOString() });
+      if (r.error) throw r.error;
     }
   };
 
@@ -361,8 +384,12 @@
     events: [],       // todos los eventos de todos los procesos
     attachments: [],  // todos los adjuntos de todos los procesos
     notifications: [], // solo las mías (bandeja de notificaciones)
+    chatMessages: [], // chat general — solo mientras dure la etapa de prueba
+    activityFeed: [], // "Actividad reciente" — idem, viene ya armada del servidor
+    appSettings: {},  // interruptores generales, p. ej. testing_features_enabled
     activeTab: "home",
     dashboardSubtab: "resumen", // pestaña activa dentro del Dashboard
+    chatSubtab: "general", // pestaña activa dentro de "Chat": 'general' | 'actividad'
     authMode: "signin", // 'signin' | 'signup'
     caseFilterArea: "",
     loading: true,
@@ -382,6 +409,14 @@
   function isAdmin() { return !!(state.me && state.me.is_admin); }
   function myRoles() { return (state.me && state.me.roles) || []; }
   function myAreaId() { return state.me ? state.me.area_id : null; }
+
+  // Chat general y "Actividad reciente" — pensados SOLO para la etapa de
+  // prueba de Procomly. La administradora los prende/apaga desde "Áreas y
+  // usuarios" (ver renderAreasUsuarios); mientras estén apagados, la base
+  // de datos también deja de aceptar mensajes nuevos y de mostrar procesos
+  // fuera del alcance normal de cada quien (ver supabase-schema.sql).
+  function testingFeaturesEnabled() { return !!state.appSettings.testing_features_enabled; }
+  function canWriteChat() { return isAdmin() || myRoles().some(function (r) { return r !== "observador"; }); }
 
   function caseDisplayNumber(c) { return "#" + (1000 + Number(c.case_number || 0)); }
 
@@ -525,6 +560,9 @@
       state.events = data.events;
       state.attachments = data.attachments;
       state.notifications = data.notifications;
+      state.chatMessages = data.chatMessages;
+      state.activityFeed = data.activityFeed;
+      state.appSettings = data.appSettings;
       state.me = profileById(state.user.id);
       state.loading = false;
       if (state.me && state.me.active === false) { renderDeactivatedScreen(); return; }
@@ -560,6 +598,9 @@
       state.events = data.events;
       state.attachments = data.attachments;
       state.notifications = data.notifications;
+      state.chatMessages = data.chatMessages;
+      state.activityFeed = data.activityFeed;
+      state.appSettings = data.appSettings;
       state.me = profileById(state.user.id);
       if (state.me && state.me.active === false) {
         if (window.__eted_interval) { clearInterval(window.__eted_interval); window.__eted_interval = null; }
@@ -695,6 +736,7 @@
     { key: "nueva", label: "Nueva solicitud", icon: "➕" },
     { key: "procesos", label: "Procesos en curso", icon: "📋" },
     { key: "panorama", label: "Dashboard", icon: "📊" },
+    { key: "chat", label: "Chat", icon: "💬" }, // solo mientras dure la etapa de prueba — ver testingFeaturesEnabled()
     { key: "areas", label: "Áreas y usuarios", icon: "🏢" }
   ];
 
@@ -866,7 +908,11 @@
     var pending = pendingForMe();
     var activeN = activeCasesCount();
     var pendingProfiles = pendingProfilesCount();
-    nav.innerHTML = TABS.map(function (t) {
+    // La administradora sigue viendo "Chat" en el menú aunque lo haya
+    // apagado (para poder revisar el historial o volver a activarlo);
+    // para todos los demás, desaparece del todo mientras esté apagado.
+    var visibleTabs = TABS.filter(function (t) { return t.key !== "chat" || testingFeaturesEnabled() || isAdmin(); });
+    nav.innerHTML = visibleTabs.map(function (t) {
       var badge = "";
       if (t.key === "home" && pending) badge = '<span class="badge">' + pending + "</span>";
       if (t.key === "procesos" && activeN) badge = '<span class="badge">' + activeN + "</span>";
@@ -886,7 +932,12 @@
   }
 
   function renderRoute() {
-    var titleMap = { home: "Inicio", nueva: "Nueva solicitud de compra", procesos: "Procesos en curso", panorama: "Dashboard", areas: "Áreas y usuarios" };
+    // Si el chat/actividad se apagó a mitad de sesión (otra persona con
+    // la pestaña abierta, o esta misma en otra pestaña) y alguien se había
+    // quedado justo ahí, lo mandamos a "Inicio" en vez de dejarlo en una
+    // pantalla que ya no debería estar disponible.
+    if (state.activeTab === "chat" && !testingFeaturesEnabled() && !isAdmin()) state.activeTab = "home";
+    var titleMap = { home: "Inicio", nueva: "Nueva solicitud de compra", procesos: "Procesos en curso", panorama: "Dashboard", chat: "Chat", areas: "Áreas y usuarios" };
     var titleEl = $("#topbar-title");
     if (titleEl) titleEl.textContent = titleMap[state.activeTab] || "";
     var box = $("#content");
@@ -895,6 +946,7 @@
     else if (state.activeTab === "nueva") renderNuevaSolicitud(box);
     else if (state.activeTab === "procesos") renderProcesos(box);
     else if (state.activeTab === "panorama") renderDashboard(box);
+    else if (state.activeTab === "chat") renderChat(box);
     else if (state.activeTab === "areas") renderAreasUsuarios(box);
     wireCaseActionsOnce();
   }
@@ -1981,10 +2033,152 @@
     downloadCSV(rows, "procomly-procesos");
   }
 
+  // ============================================================ Chat
+  // Chat general del equipo + feed de "Actividad reciente" — pensados
+  // SOLO para la etapa de prueba de Procomly (ver testingFeaturesEnabled()
+  // más arriba). El feed no guarda nada propio: reutiliza state.events,
+  // que mientras dure la prueba llega con TODOS los procesos (no solo los
+  // de cada quien) gracias a las políticas de la base de datos.
+  var CHAT_SUBTABS = [
+    { key: "general", label: "Chat general" },
+    { key: "actividad", label: "Todos los procesos" } // deliberadamente distinto del "Actividad reciente" de Inicio — este cruza TODOS los procesos, no solo los propios
+  ];
+
+  function renderChat(box) {
+    if (!testingFeaturesEnabled() && !isAdmin()) {
+      box.innerHTML = '<p class="hint">El chat y la actividad reciente ya no están disponibles.</p>';
+      return;
+    }
+    var sub = state.chatSubtab || "general";
+    if (!CHAT_SUBTABS.some(function (t) { return t.key === sub; })) sub = "general";
+    box.innerHTML =
+      '<div class="testing-banner">🧪 Chat general y actividad reciente — solo mientras dure la etapa de prueba de Procomly.' +
+      (testingFeaturesEnabled() ? "" : " La administradora lo desactivó; solo ella puede verlo por ahora.") + "</div>" +
+      '<div class="dash-subtabs">' + CHAT_SUBTABS.map(function (t) {
+        return '<button type="button" class="dash-subtab-btn' + (t.key === sub ? " active" : "") + '" data-subtab="' + t.key + '">' + esc(t.label) + "</button>";
+      }).join("") + "</div>" +
+      '<div id="chat-subtab-content">' + (sub === "actividad" ? renderChatActividad() : renderChatGeneral()) + "</div>";
+
+    $$(".dash-subtab-btn", box).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.chatSubtab = btn.getAttribute("data-subtab");
+        renderRoute();
+      });
+    });
+    $$("[data-case-id]", box).forEach(function (el) {
+      el.addEventListener("click", function () { goToCase(el.getAttribute("data-case-id")); });
+    });
+
+    var msgsBox = $("#chat-messages-list", box);
+    if (msgsBox) msgsBox.scrollTop = msgsBox.scrollHeight;
+
+    var sendBtn = $("#chat-send-btn", box);
+    var input = $("#chat-compose-input", box);
+    if (sendBtn && input) {
+      sendBtn.addEventListener("click", onSendChatMessage);
+      input.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); onSendChatMessage(); }
+      });
+    }
+    $$(".chat-msg-delete", box).forEach(function (b) {
+      b.addEventListener("click", function () { onDeleteChatMessage(b.getAttribute("data-msg-id")); });
+    });
+  }
+
+  function renderChatGeneral() {
+    var canWrite = testingFeaturesEnabled() && canWriteChat();
+    var list = state.chatMessages || [];
+    var body = !list.length
+      ? '<p class="chat-empty">Todavía no hay ningún mensaje. ¡Escribe el primero!</p>'
+      : list.map(function (m) {
+          var mine = state.me && m.author_id === state.me.id;
+          return '<div class="chat-msg' + (mine ? " mine" : "") + '">' +
+            '<div class="chat-msg-head"><span class="chat-msg-author">' + esc(m.author_name || "—") + "</span>" +
+            (isAdmin() ? '<button type="button" class="chat-msg-delete" data-msg-id="' + esc(m.id) + '" title="Borrar mensaje">×</button>' : "") +
+            "</div>" +
+            '<div class="chat-msg-body">' + esc(m.body) + "</div>" +
+            '<div class="chat-msg-time">' + fmtDateTime(m.created_at) + "</div>" +
+            "</div>";
+        }).join("");
+    return '<div class="card"><div class="card-pad">' +
+      '<div class="chat-messages" id="chat-messages-list">' + body + "</div>" +
+      (canWrite
+        ? '<div class="chat-compose"><div class="field"><input type="text" id="chat-compose-input" placeholder="Escribe un mensaje…" maxlength="2000"></div><button type="button" class="btn" id="chat-send-btn">Enviar</button></div>'
+        : '<p class="hint" style="margin-top:10px;">' + (testingFeaturesEnabled() ? "Observador (solo lectura) puede leer el chat pero no escribir." : "El chat está desactivado — solo la administradora puede verlo por ahora.") + "</p>") +
+      "</div></div>";
+  }
+
+  // Nota: la "Actividad reciente" NO se arma con state.events/state.cases
+  // (esos ya vienen acotados al alcance normal de cada puesto). Viene de
+  // recent_activity_feed(), una función en la base de datos que decide por
+  // sí misma si mostrar algo, según el interruptor de la etapa de prueba —
+  // así "Procesos en curso" y el resto de la aplicación no se ven afectados
+  // por este feed en lo absoluto.
+  function renderChatActividad() {
+    var feed = state.activityFeed || [];
+    if (!feed.length) return '<p class="chart-empty">Todavía no hay actividad registrada.</p>';
+    return '<div class="card"><div class="card-title">Lo último en todos los procesos (' + feed.length + ')</div><div class="card-pad">' +
+      '<ul class="status-list">' + feed.map(function (f) {
+        var label = f.case_number != null ? caseDisplayNumber({ case_number: f.case_number }) + " — " + f.case_title : f.case_title;
+        return '<li class="status-row" data-case-id="' + esc(f.case_id) + '" title="Ver este proceso en \'Procesos en curso\'">' +
+          '<div class="status-main"><span class="status-title">' + esc(label) + '</span>' +
+          '<span class="status-puesto">' + esc(f.actor_name || "—") + (f.role_label ? " · " + esc(f.role_label) : "") + " — " + esc(f.action) + (f.note ? ": " + esc(f.note) : "") + "</span></div>" +
+          '<div class="status-side"><span class="status-time num">' + fmtDateTime(f.ts) + "</span></div>" +
+          "</li>";
+      }).join("") + "</ul>" +
+      "</div></div>";
+  }
+
+  async function onSendChatMessage() {
+    var input = $("#chat-compose-input");
+    if (!input) return;
+    var body = input.value.trim();
+    if (!body) return;
+    var btn = $("#chat-send-btn");
+    if (btn) btn.disabled = true;
+    try {
+      await DB.sendChatMessage(state.me.id, state.me.full_name || state.me.email, body);
+      input.value = "";
+      await refreshData();
+    } catch (err) {
+      console.error(err);
+      showToast("No se pudo enviar", String(err.message || err), true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function onDeleteChatMessage(id) {
+    if (!(await showConfirm("¿Borrar este mensaje del chat? No se puede deshacer."))) return;
+    try {
+      await DB.deleteChatMessage(id);
+      await refreshData(true);
+    } catch (err) {
+      showToast("No se pudo borrar", String(err.message || err), true);
+    }
+  }
+
+  async function onToggleTestingFeatures() {
+    var next = !testingFeaturesEnabled();
+    var msg = next
+      ? "¿Activar el chat general y la actividad reciente? Cualquier persona con un puesto asignado (menos Observador) podrá escribir en el chat, y mientras esté activo, todos podrán ver todos los procesos (no solo los suyos) en la pestaña \"Todos los procesos\" del Chat."
+      : "¿Desactivar el chat general y la actividad reciente? Se ocultan de inmediato para todos (tú sigues pudiendo leer el chat desde aquí); los mensajes no se borran, y puedes volver a activarlo cuando quieras.";
+    if (!(await showConfirm(msg))) return;
+    try {
+      await DB.updateSetting("testing_features_enabled", next);
+      await refreshData(true);
+      renderSidebar();
+      showToast(next ? "Chat y actividad activados" : "Chat y actividad desactivados", "");
+    } catch (err) {
+      showToast("No se pudo cambiar", String(err.message || err), true);
+    }
+  }
+
   // =================================================== Áreas y usuarios
   function renderAreasUsuarios(box) {
     box.innerHTML =
       '<p class="hint" style="margin-bottom:16px;">' + (isAdmin() ? "Como administrador puedes crear áreas y asignar puestos a cada persona registrada." : "Solo el administrador puede editar áreas y el directorio de usuarios.") + "</p>" +
+      (isAdmin() ? testingToggleCardHTML() : "") +
       '<div class="form-grid" style="align-items:start;">' +
       '<div class="card"><div class="card-title">Áreas requirentes</div><div class="card-pad">' +
       '<div class="area-list" id="areas-list"></div>' +
@@ -2011,7 +2205,24 @@
       inviteWrap.innerHTML = pendingInviteFormHTML(null);
       wirePendingInviteForm(inviteWrap, null);
       renderPendingInvitesList();
+      var toggleBtn = $("#testing-toggle-btn");
+      if (toggleBtn) toggleBtn.addEventListener("click", onToggleTestingFeatures);
     }
+  }
+
+  // Tarjeta admin-only para prender/apagar el chat general y la actividad
+  // reciente — pensada para que la administradora pueda quitarlos con un
+  // clic en cuanto termine la etapa de prueba, sin tocar código.
+  function testingToggleCardHTML() {
+    var on = testingFeaturesEnabled();
+    return '<div class="card" style="margin-bottom:16px;"><div class="card-title">🧪 Modo de prueba</div><div class="card-pad">' +
+      '<p class="hint" style="margin-bottom:10px;">Controla el chat general y la pestaña "Todos los procesos" (pensados solo para mientras se prueba Procomly). ' +
+      (on
+        ? "Ahora mismo están <strong>activados</strong>: cualquiera con un puesto asignado (menos Observador) puede escribir en el chat, y todos pueden ver todos los procesos en la pestaña \"Todos los procesos\"."
+        : "Ahora mismo están <strong>desactivados</strong>: nadie más que tú puede verlos ni escribir.") +
+      "</p>" +
+      '<button type="button" class="btn ' + (on ? "danger" : "") + ' small" id="testing-toggle-btn">' + (on ? "Desactivar chat y actividad" : "Activar chat y actividad") + "</button>" +
+      "</div></div>";
   }
 
   function renderAreasChips() {

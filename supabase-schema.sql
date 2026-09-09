@@ -182,6 +182,34 @@ create table public.notifications (
   created_at    timestamptz not null default now()
 );
 
+-- Interruptores generales de la aplicación — por ahora solo si el chat
+-- general y el feed de "Actividad reciente" (pensados SOLO para la etapa
+-- de prueba de Procomly) están activados. La administradora los prende o
+-- apaga con un clic desde "Áreas y usuarios", sin tocar código ni Supabase.
+create table public.app_settings (
+  key         text primary key,
+  value       boolean not null default false,
+  updated_at  timestamptz not null default now()
+);
+comment on table public.app_settings is 'Interruptores generales de la aplicación, editables solo por la administradora.';
+
+insert into public.app_settings (key, value) values ('testing_features_enabled', true)
+  on conflict (key) do nothing;
+
+-- Chat general del equipo — pensado SOLO para la etapa de prueba (ver
+-- app_settings.testing_features_enabled y las políticas más abajo, que
+-- dejan de permitir escribir en cuanto se apaga el interruptor). El feed
+-- de "Actividad reciente" no necesita una tabla propia: se arma dentro de
+-- la aplicación a partir de case_events, que mientras dure la prueba se
+-- vuelve visible para todos (ver la política adicional sobre case_events).
+create table public.chat_messages (
+  id           uuid primary key default gen_random_uuid(),
+  author_id    uuid references public.profiles (id),
+  author_name  text not null default '',
+  body         text not null,
+  created_at   timestamptz not null default now()
+);
+
 -- ============================================================================
 -- 2. FUNCIONES DE APOYO PARA LAS POLÍTICAS DE SEGURIDAD
 -- ============================================================================
@@ -288,6 +316,75 @@ as $$
       )
   );
 $$;
+
+-- ¿Está activada la etapa de prueba (chat general + feed de "Actividad
+-- reciente" entre procesos)? Lo enciende o apaga la administradora desde
+-- "Áreas y usuarios" — pensado para quitarlo con un clic, sin tocar
+-- código, en cuanto termine el período de prueba.
+create or replace function public.testing_features_enabled()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce((select value from public.app_settings where key = 'testing_features_enabled'), false);
+$$;
+
+-- ¿Puede la persona actual escribir en el chat general? Cualquiera con al
+-- menos un puesto activo que no sea "Observador (solo lectura)" — igual
+-- que en el resto de la aplicación, Observador puede leer pero nunca
+-- escribir nada.
+create or replace function public.can_write_chat()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce((
+    select p.is_admin or exists (select 1 from unnest(p.roles) r where r <> 'observador')
+    from public.profiles p
+    where p.id = auth.uid() and p.active
+  ), false);
+$$;
+
+-- Los últimos eventos de TODOS los procesos, para la pestaña "Actividad
+-- reciente" del chat — SOLO mientras dure la etapa de prueba. A propósito
+-- NO se implementa ampliando las políticas de "select" de cases/case_events
+-- (eso filtraría hacia CUALQUIER pantalla que lea esas tablas, incluida
+-- "Procesos en curso", y dejaría a cada quien viendo procesos que no le
+-- corresponden fuera del feed). En cambio, esta función es "security
+-- definer" — de forma que puede leer sin restricción por dentro — pero
+-- ella misma exige, en su propio WHERE, que el interruptor esté encendido
+-- (o que quien pregunta sea la administradora); si no, simplemente
+-- devuelve cero filas, sin error. cases_select_scoped y
+-- case_events_select_scoped (arriba) no cambian en nada.
+create or replace function public.recent_activity_feed(p_limit int default 150)
+returns table (
+  case_id     uuid,
+  case_number bigint,
+  case_title  text,
+  ts          timestamptz,
+  actor_name  text,
+  role_label  text,
+  action      text,
+  note        text
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select e.case_id, c.case_number, c.title, e.ts, e.actor_name, e.role_label, e.action, e.note
+  from public.case_events e
+  join public.cases c on c.id = e.case_id
+  where public.testing_features_enabled() or public.is_admin()
+  order by e.ts desc
+  limit greatest(1, least(coalesce(p_limit, 150), 500));
+$$;
+
+grant execute on function public.recent_activity_feed(int) to authenticated;
 
 -- ============================================================================
 -- 3. TRIGGER: crear automáticamente un perfil vacío al registrarse
@@ -407,6 +504,8 @@ alter table public.case_events       enable row level security;
 alter table public.attachments       enable row level security;
 alter table public.notifications_log enable row level security;
 alter table public.notifications     enable row level security;
+alter table public.app_settings      enable row level security;
+alter table public.chat_messages     enable row level security;
 
 -- ---------- profiles ----------
 -- Cualquier persona que inició sesión puede ver el directorio (nombres,
@@ -712,6 +811,48 @@ $$;
 create trigger case_events_notify
   after insert on public.case_events
   for each row execute procedure public.fanout_case_event_notifications();
+
+-- ---------- app_settings ----------
+-- Cualquiera puede LEER los interruptores (para que la aplicación sepa si
+-- debe mostrar el chat/feed o no); solo la administradora puede cambiarlos.
+create policy "app_settings_select_authenticated"
+  on public.app_settings for select
+  to authenticated
+  using (true);
+
+create policy "app_settings_write_admin_only"
+  on public.app_settings for all
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- ---------- chat_messages ----------
+-- Pensado SOLO para la etapa de prueba — ver la nota junto a la tabla en
+-- la sección 1. Todos pueden leer mientras el interruptor esté encendido
+-- (la administradora también cuando está apagado, para poder revisar la
+-- conversación antes de decidir si quita la función del todo); solo puede
+-- escribir quien tenga algún puesto que no sea Observador, y solo
+-- mientras el interruptor siga encendido.
+create policy "chat_messages_select_while_enabled"
+  on public.chat_messages for select
+  to authenticated
+  using (public.testing_features_enabled() or public.is_admin());
+
+create policy "chat_messages_insert_while_enabled"
+  on public.chat_messages for insert
+  to authenticated
+  with check (
+    author_id = auth.uid()
+    and public.can_write_chat()
+    and public.testing_features_enabled()
+  );
+
+-- Solo la administradora puede borrar un mensaje (moderación durante la
+-- prueba) — nadie más edita ni borra mensajes ya enviados.
+create policy "chat_messages_delete_admin_only"
+  on public.chat_messages for delete
+  to authenticated
+  using (public.is_admin());
 
 -- ============================================================================
 -- 5. ALMACENAMIENTO (Storage) — bucket para los archivos adjuntos
