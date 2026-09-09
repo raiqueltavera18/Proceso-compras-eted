@@ -191,9 +191,9 @@ permita.
 | Puesto | Qué procesos ve | Puede crear una solicitud nueva | Puede actuar (avanzar / devolver) | Adjuntar archivos | Áreas y usuarios |
 |---|---|---|---|---|---|
 | **Administrador** | Todos, sin excepción | Sí, para cualquier área | Sí, en cualquier etapa (queda registrado a su propio nombre) | Sí, en cualquier proceso | Crear/editar áreas, invitar personas, asignar cualquier puesto (incluido administrador) |
-| **Secretaría y Gerencia de Compras** | Todos | No | Solo en las etapas "Secretaría y Gerencia de Compras" y "Publicación", y todo el seguimiento posterior a la publicación (adjudicar, declarar desierto, registrar orden de compra, marcar pagado y cerrar) — en "Procesos pendientes de mi acción" solo ve los que están sin asignar o asignados a ella misma | Sí, en los procesos que ve | Solo lectura |
-| **Coordinador** | Solo los procesos que tiene asignados a él/ella | No | Solo en la etapa "Coordinador", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
-| **Analista** | Solo los procesos que tiene asignados a él/ella | No | Solo en las etapas "Analista" y "Corrección", en sus procesos asignados | Sí, en sus procesos | Solo lectura |
+| **Secretaría y Gerencia de Compras** | Solo los que no tienen todavía a nadie de este puesto asignado, o los que tiene asignados a ella misma — ya no ve automáticamente los que ya están en manos de otra persona de este mismo puesto | No | Solo en las etapas "Secretaría y Gerencia de Compras" y "Publicación", y todo el seguimiento posterior a la publicación (adjudicar, declarar desierto, registrar orden de compra, marcar pagado y cerrar) — siempre dentro de los procesos que puede ver (columna anterior) | Sí, en los procesos que ve | Solo lectura |
+| **Coordinador** | Solo los procesos que tiene asignados a él/ella | No | En las etapas "Coordinador" y "Coordinador — revisando pliego" (tras recibirlo de vuelta del Analista), en sus procesos asignados | Sí, en sus procesos | Solo lectura |
+| **Analista** | Solo los procesos que tiene asignados a él/ella | No | Solo en las etapas "Analista" y "Corrección", en sus procesos asignados — al terminar el pliego lo remite de vuelta a Coordinación (ya no directo a Jurídico) | Sí, en sus procesos | Solo lectura |
 | **Consultoría Jurídica** | Todos | No | Solo en la etapa "Jurídico" | Sí, en los procesos que ve | Solo lectura |
 | **Área requirente** | Solo los procesos de su propia área | Sí, únicamente para su propia área | Solo en la etapa "Área — corrigiendo", en procesos de su área | Sí, en los procesos de su área | Solo lectura |
 
@@ -903,6 +903,299 @@ Después de correrlo, sube también `app.js`, `styles.css` y
 "Chat" aparecerá activada por defecto para todo el que tenga un puesto
 asignado (menos Observador); puedes apagarla en cualquier momento desde
 "Áreas y usuarios" → "🧪 Modo de prueba", como se explica en el `README.md`.
+
+**Ya tenía mi proyecto creado antes del nuevo paso "Coordinador — revisando pliego", la visibilidad acotada de Secretaría y Gerencia de Compras, y las menciones (@) del chat — ¿cómo lo actualizo?**
+Este cambio trae tres cosas juntas: (1) después de que el Analista elabora el
+pliego, el proceso vuelve siempre a Coordinación, que decide si va a
+Consultoría Jurídica (Licitación) o directo a Publicación (Compra menor);
+(2) Secretaría y Gerencia de Compras deja de ver automáticamente TODOS los
+procesos — solo ve los que no tienen todavía a nadie de ese puesto
+asignado, o los que tiene asignados a sí misma; (3) en el chat ahora se
+puede etiquetar a alguien con `@` y le llega una notificación real. Corre
+esto una sola vez en el **SQL Editor** de tu proyecto — es seguro, no borra
+ningún proceso ni ninguna cuenta que ya tengas:
+
+```sql
+-- 1) Nueva etapa "coordinador-revision" en la lista de valores permitidos.
+alter table public.cases drop constraint if exists cases_stage_check;
+alter table public.cases add constraint cases_stage_check
+  check (stage in ('secretaria','gerente','coordinador','analista','correccion',
+                    'area-correccion','coordinador-revision','juridico','publicacion',
+                    'publicado','adjudicado','desierto','pendiente-pago','cerrado','cancelado'));
+
+-- 2) El pliego del Analista ya no va directo a Jurídico: pasa por
+--    "coordinador-revision", que decide el destino según el tipo de
+--    proceso (menor -> Publicación directo; licitación -> Jurídico).
+create or replace function public.enforce_case_transition()
+returns trigger
+language plpgsql
+as $$
+declare
+  allowed text[];
+begin
+  if public.is_admin() then
+    return new;
+  end if;
+
+  if old.stage = new.stage then
+    return new;
+  end if;
+
+  allowed := case old.stage
+    when 'secretaria'      then array['gerente','cancelado']
+    when 'gerente'         then array['coordinador','area-correccion','cancelado']
+    when 'coordinador'     then array['analista','gerente','area-correccion','cancelado']
+    when 'analista'        then array['coordinador-revision','gerente','coordinador','area-correccion','cancelado']
+    when 'correccion'      then array['coordinador-revision','area-correccion','cancelado']
+    when 'coordinador-revision' then
+      case new.tipo
+        when 'menor'      then array['publicacion','gerente','cancelado']
+        when 'licitacion' then array['juridico','gerente','cancelado']
+        else array[]::text[]
+      end
+    when 'area-correccion' then array['analista','cancelado']
+    when 'juridico'        then array['publicacion','gerente','coordinador','analista','area-correccion','cancelado']
+    when 'publicacion'     then array['publicado','cancelado']
+    when 'publicado'       then array['adjudicado','desierto','cancelado']
+    when 'adjudicado'      then array['pendiente-pago','cancelado']
+    when 'pendiente-pago'  then array['cerrado']
+    else array[]::text[]
+  end;
+
+  if not (new.stage = any(allowed)) then
+    raise exception 'Transición de etapa no permitida: % -> %', old.stage, new.stage;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- 3) Quién puede modificar el proceso en la nueva etapa, y las etapas ya
+--    existentes que Gerencia administra después de publicar quedan
+--    acotadas al mismo alcance que puede VER (ver el punto 4).
+drop policy if exists "cases_update_stage_owner" on public.cases;
+create policy "cases_update_stage_owner"
+  on public.cases for update
+  to authenticated
+  using (
+    public.is_admin()
+    or (stage = 'secretaria' and public.has_role('secretaria') and (secretaria_id is null or secretaria_id = auth.uid()))
+    or (stage = 'gerente' and public.has_role('gerente') and (gerente_id is null or gerente_id = auth.uid()))
+    or (stage = 'publicacion' and public.has_role('gerente') and (gerente_id is null or gerente_id = auth.uid()))
+    or (stage = 'coordinador' and coordinador_id = auth.uid())
+    or (stage = 'coordinador-revision' and coordinador_id = auth.uid())
+    or (stage in ('analista','correccion') and analista_id = auth.uid())
+    or (stage = 'area-correccion' and public.has_role('area') and area_id = public.my_area_id())
+    or (stage = 'juridico' and public.has_role('juridico'))
+    or (stage in ('publicado','adjudicado','pendiente-pago') and public.has_role('gerente') and (gerente_id is null or gerente_id = auth.uid()))
+  )
+  with check (true);
+
+-- 4) Secretaría y Gerencia de Compras ya NO ve/edita automáticamente todos
+--    los procesos: solo los que no tienen todavía a nadie de ese puesto
+--    asignado, o los que tiene asignados a sí misma. Jurídico y el
+--    administrador siguen viendo todos, igual que antes.
+create or replace function public.can_view_case(target_case_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.cases c
+    where c.id = target_case_id
+      and (
+        public.is_admin()
+        or (public.has_role('secretaria') and (c.secretaria_id is null or c.secretaria_id = auth.uid()))
+        or (public.has_role('gerente') and (c.gerente_id is null or c.gerente_id = auth.uid()))
+        or public.has_role('juridico')
+        or public.has_role('observador')
+        or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+        or (public.has_role('analista') and c.analista_id = auth.uid())
+        or (public.has_role('area') and c.area_id = public.my_area_id())
+      )
+  );
+$$;
+
+create or replace function public.can_log_case_event(target_case_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.cases c
+    where c.id = target_case_id
+      and (
+        public.is_admin()
+        or (public.has_role('secretaria') and (c.secretaria_id is null or c.secretaria_id = auth.uid()))
+        or (public.has_role('gerente') and (c.gerente_id is null or c.gerente_id = auth.uid()))
+        or public.has_role('juridico')
+        or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+        or (public.has_role('analista') and c.analista_id = auth.uid())
+        or (public.has_role('area') and c.area_id = public.my_area_id())
+      )
+  );
+$$;
+
+-- 5) "Editar solicitud" (descripción, tipo, área, solicitante) para
+--    Gerencia queda acotado igual: solo en los procesos que puede ver.
+create or replace function public.edit_case_basic_fields(
+  p_case_id uuid, p_title text, p_tipo text, p_area_id uuid, p_solicitante text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c public.cases%rowtype;
+  me public.profiles%rowtype;
+  cambios text := '';
+begin
+  select * into c from public.cases where id = p_case_id;
+  if not found then
+    raise exception 'Proceso no encontrado';
+  end if;
+
+  if not (
+    public.is_admin()
+    or (public.has_role('gerente') and (c.gerente_id is null or c.gerente_id = auth.uid()))
+    or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
+    or (public.has_role('analista') and c.analista_id = auth.uid())
+  ) then
+    raise exception 'No tienes permiso para editar los datos de este proceso';
+  end if;
+
+  if p_tipo not in ('menor','licitacion') then
+    raise exception 'Tipo de proceso inválido';
+  end if;
+
+  select * into me from public.profiles where id = auth.uid();
+
+  if c.title is distinct from p_title then
+    cambios := cambios || 'descripción: "' || c.title || '" → "' || p_title || '". ';
+  end if;
+  if c.tipo is distinct from p_tipo then
+    cambios := cambios || 'tipo: "' || c.tipo || '" → "' || p_tipo || '". ';
+  end if;
+  if c.area_id is distinct from p_area_id then
+    cambios := cambios || 'área requirente cambiada. ';
+  end if;
+  if c.solicitante is distinct from p_solicitante then
+    cambios := cambios || 'solicitado por: "' || c.solicitante || '" → "' || p_solicitante || '". ';
+  end if;
+
+  update public.cases
+  set title = p_title, tipo = p_tipo, area_id = p_area_id, solicitante = p_solicitante
+  where id = p_case_id;
+
+  if cambios <> '' then
+    insert into public.case_events (case_id, stage_held, actor_id, actor_name, role_label, action, note, duration_ms)
+    values (p_case_id, c.stage, auth.uid(), coalesce(nullif(me.full_name, ''), me.email, ''), 'Edición de solicitud', 'editó los datos de la solicitud', cambios, 0);
+  end if;
+end;
+$$;
+
+grant execute on function public.edit_case_basic_fields(uuid, text, text, uuid, text) to authenticated;
+
+-- 6) Las notificaciones automáticas a Gerencia (cada vez que se registra
+--    un evento en un proceso) quedan igual de acotadas: ya no avisan a un
+--    gerente al que el proceso ya no le aparece en pantalla.
+create or replace function public.fanout_case_event_notifications()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c public.cases%rowtype;
+  ger record;
+  already uuid[] := '{}';
+  resumen text;
+begin
+  select * into c from public.cases where id = new.case_id;
+  if not found then return new; end if;
+
+  resumen := trim(coalesce(new.actor_name, '') || ' ' || coalesce(new.action, ''));
+
+  if c.coordinador_id is not null and c.coordinador_id <> new.actor_id then
+    insert into public.notifications (recipient_id, case_id, kind, title, body)
+    values (c.coordinador_id, c.id, 'proceso', c.title, resumen);
+    already := already || c.coordinador_id;
+  end if;
+
+  if c.analista_id is not null and c.analista_id <> new.actor_id and not (c.analista_id = any(already)) then
+    insert into public.notifications (recipient_id, case_id, kind, title, body)
+    values (c.analista_id, c.id, 'proceso', c.title, resumen);
+    already := already || c.analista_id;
+  end if;
+
+  if c.created_by is not null and c.created_by <> new.actor_id and not (c.created_by = any(already)) then
+    insert into public.notifications (recipient_id, case_id, kind, title, body)
+    values (c.created_by, c.id, 'proceso', c.title, resumen);
+    already := already || c.created_by;
+  end if;
+
+  for ger in
+    select id from public.profiles
+    where 'gerente' = any(roles) and active
+      and (c.gerente_id is null or c.gerente_id = id)
+  loop
+    if ger.id <> new.actor_id and not (ger.id = any(already)) then
+      insert into public.notifications (recipient_id, case_id, kind, title, body)
+      values (ger.id, c.id, 'proceso', c.title, resumen);
+      already := already || ger.id;
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+-- 7) Etiquetar (@) en el chat: nueva columna + notificación a la campanita.
+alter table public.chat_messages add column if not exists mentioned_ids uuid[] not null default '{}';
+
+create or replace function public.fanout_chat_mention_notifications()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid;
+  ids uuid[];
+begin
+  ids := coalesce((select array_agg(distinct x) from unnest(new.mentioned_ids) x), '{}');
+
+  foreach uid in array ids loop
+    if uid is not null and uid <> new.author_id then
+      insert into public.notifications (recipient_id, case_id, kind, title, body)
+      values (uid, null, 'chat_mention', coalesce(nullif(new.author_name, ''), 'Alguien'), new.body);
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists chat_messages_notify_mentions on public.chat_messages;
+create trigger chat_messages_notify_mentions
+  after insert on public.chat_messages
+  for each row execute procedure public.fanout_chat_mention_notifications();
+```
+
+Después de correrlo, sube también `app.js`, `styles.css` y
+`supabase-schema.sql` actualizados a tu repositorio de GitHub. El chat ahora
+vive en el ícono 💬 de la barra superior (junto a la campanita), ya no en
+una pestaña del menú lateral — no hace falta ningún paso adicional para
+eso, es solo el código nuevo de `app.js`. Ten en cuenta que, en cuanto
+apliques esto, cualquier persona de Secretaría y Gerencia de Compras que no
+sea administradora verá menos procesos en el Dashboard y en los reportes
+(solo los suyos y los sin asignar) — si tu equipo esperaba ver el total de
+la empresa ahí, avísales del cambio.
 
 **Cuenta de demostración compartida (un solo correo para varios probadores)**
 Para que varias personas revisen Procomly sin tener que invitar a cada una

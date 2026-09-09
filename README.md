@@ -84,13 +84,22 @@ README.md                Este archivo
 ## Cómo funciona el flujo de un proceso
 
 Cada solicitud de compra pasa, en orden, por: **Secretaría y Gerencia de
-Compras → Coordinación → Análisis → (Consultoría Jurídica) → Publicación →
-Adjudicación → Orden de compra → Pago → Cierre**. En cualquier etapa previa a
-la publicación, quien la tiene a cargo puede **devolverla** a una etapa
-anterior con un motivo, si detecta algo que corregir — el proceso queda
-marcado como "en corrección" hasta que se vuelve a completar correctamente.
-Todo el historial (quién hizo qué y cuándo) queda registrado de forma
-permanente.
+Compras → Coordinación → Análisis → Coordinación (revisión del pliego) →
+[Consultoría Jurídica, solo Licitación] → Publicación → Adjudicación → Orden
+de compra → Pago → Cierre**. En cualquier etapa previa a la publicación,
+quien la tiene a cargo puede **devolverla** a una etapa anterior con un
+motivo, si detecta algo que corregir — el proceso queda marcado como "en
+corrección" hasta que se vuelve a completar correctamente. Todo el
+historial (quién hizo qué y cuándo) queda registrado de forma permanente.
+
+> **Nota sobre el pliego y la revisión de Coordinación:** después de que el
+> Analista elabora y carga el pliego, el proceso **vuelve siempre a
+> Coordinación** — nunca va directo a Consultoría Jurídica. Desde ahí,
+> Coordinación decide el destino según el **tipo de proceso**: si es
+> **Licitación**, lo remite a Consultoría Jurídica (igual que antes); si es
+> **Compra menor**, lo aprueba y lo envía **directo a Publicación**, sin
+> pasar por Jurídico. Esto reemplaza el paso anterior en el que el Analista
+> enviaba el pliego directo a Jurídico en ambos casos.
 
 > **Nota:** "Secretaría y Gerencia de Compras" es un solo puesto/etapa —
 > antes existían por separado "Secretaría Administrativa" y "Gerente de
@@ -150,13 +159,17 @@ registrada con el nombre real de la administradora, nunca suplantando a
 otra persona.
 
 Además, cada puesto solo ve lo que le corresponde: Coordinación y Análisis
-solo ven los procesos que tienen asignados a ellos mismos, y un Área
-requirente solo ve los procesos de su propia área — el resto de los puestos
-(Secretaría y Gerencia de Compras, Jurídico, Administrador) ven todos los
-procesos, porque necesitan seguimiento del flujo completo. Dentro de
-"Procesos pendientes de mi acción", Secretaría y Gerencia de Compras solo ve
-los que están sin asignar o asignados a ella misma, igual que Coordinación y
-Análisis. La tabla de permisos completa está en `SETUP.md`.
+solo ven los procesos que tienen asignados a ellos mismos, un Área
+requirente solo ve los procesos de su propia área, y **Secretaría y
+Gerencia de Compras solo ve los procesos que no tienen todavía a nadie de
+ese puesto asignado, o los que tiene asignados a sí misma** — ya no ve
+automáticamente los que ya están en manos de otra persona de Secretaría y
+Gerencia de Compras. Jurídico y el Administrador siguen viendo todos los
+procesos, porque necesitan seguimiento del flujo completo. Esta misma regla
+aplica en todas partes (Procesos en curso, Dashboard, notificaciones): si un
+proceso ya no le aparece a alguien de Secretaría y Gerencia de Compras, no
+puede editarlo ni cuenta en sus estadísticas del Dashboard, aunque conozca
+el número del proceso. La tabla de permisos completa está en `SETUP.md`.
 
 ## Dashboard
 
@@ -193,13 +206,15 @@ con un borde de color para ubicarlo de un vistazo.
 
 En la parte superior, junto a tu nombre, hay una campanita 🔔 con un contador
 de avisos sin leer. Te avisa automáticamente cada vez que: se te asigna una
-acción dentro de un proceso, cambia algo en un proceso que tú registraste, o
+acción dentro de un proceso, cambia algo en un proceso que tú registraste,
 —si eres Coordinador o de Secretaría y Gerencia de Compras— cambia algo en
-un proceso que tienes asignado (Coordinación) o en cualquier proceso
-(Secretaría y Gerencia de Compras). Al hacer
-clic en un aviso, te marca ese aviso como leído y te lleva directo a la
-tarjeta del proceso correspondiente. Por ahora esta bandeja vive únicamente
-dentro de la aplicación — ver la sección de abajo sobre correos.
+un proceso que tienes asignado (Coordinación) o en un proceso que todavía
+puedes ver (Secretaría y Gerencia de Compras — ver más arriba), o alguien te
+**etiqueta con @ en el Chat** (ver más abajo). Al hacer clic en un aviso, te
+marca ese aviso como leído y te lleva directo a la tarjeta del proceso
+correspondiente (o, si es una mención de chat, directo al chat). Por ahora
+esta bandeja vive únicamente dentro de la aplicación — ver la sección de
+abajo sobre correos.
 
 ## Notificaciones por correo — registradas, sin enviar todavía
 
@@ -218,14 +233,20 @@ paso natural para dar una vez el resto de Procomly esté en uso.
 
 ## Chat — solo durante la etapa de prueba
 
-Mientras Procomly esté en período de prueba, la pestaña "Chat" agrega dos
-cosas pensadas para ese momento y **no para quedarse para siempre**:
+Mientras Procomly esté en período de prueba, el ícono 💬 de la barra
+superior (justo al lado de la campanita 🔔) abre un menú desplegable con dos
+cosas pensadas para ese momento y **no para quedarse para siempre**. Ya no
+es una pestaña del menú lateral — así queda a mano desde cualquier pantalla
+de la aplicación, igual que las notificaciones:
 
 - **Chat general**: una sola sala compartida donde cualquiera con un puesto
   asignado (menos Observador, que es de solo lectura) puede escribir y leer
   mensajes, para comentar dudas o avisos del día a día mientras el equipo se
   acostumbra a la aplicación. No es un chat por proceso — es uno solo, para
-  todos.
+  todos. Se puede **etiquetar a una persona** escribiendo `@` seguido de su
+  nombre — aparece una lista para elegirla, y al enviarse el mensaje le
+  llega una notificación real a su campanita 🔔 (además de quedar resaltada
+  su mención dentro del mensaje).
 - **Todos los procesos**: una lista de lo último que se ha hecho en
   cualquier proceso del sistema (quién, qué acción, en qué proceso), no
   solo los que a cada persona le tocan normalmente. Es distinta de
@@ -238,16 +259,17 @@ a "Procesos en curso" ni al resto de la aplicación — cada Coordinador,
 Analista, etc. sigue viendo únicamente lo suyo en todas las demás
 pantallas, exactamente igual que antes. El chat se actualiza con el mismo
 mecanismo que el resto de Procomly (cada 60 segundos o al pulsar
-"Actualizar"), no en tiempo real.
+"Actualizar"), no en tiempo real — salvo mientras estés escribiendo un
+mensaje, para no perderte lo que llevas escrito.
 
 Como es algo pensado solo para la prueba, la administradora tiene un
 interruptor para apagarlo con un clic en **Áreas y usuarios → 🧪 Modo de
-prueba**, sin tocar código ni Supabase. Al apagarlo, "Chat" desaparece del
-menú para todos los demás (los mensajes no se borran, solo se ocultan); la
-administradora sigue viendo la pestaña para poder revisar el historial o
-volver a activarlo cuando quiera. También puede borrar mensajes puntuales
-del chat en cualquier momento (por ejemplo, si alguien escribe algo por
-error), desde el mismo chat.
+prueba**, sin tocar código ni Supabase. Al apagarlo, el ícono 💬 desaparece
+de la barra para todos los demás (los mensajes no se borran, solo se
+ocultan); la administradora sigue viendo el ícono para poder revisar el
+historial o volver a activarlo cuando quiera. También puede borrar mensajes
+puntuales del chat en cualquier momento (por ejemplo, si alguien escribe
+algo por error), desde el mismo chat.
 
 ## ¿Preguntas?
 

@@ -87,8 +87,8 @@ create table public.cases (
                     -- proceso nuevo se crea ahí — Secretaría Administrativa y Gerencia de
                     -- Compras se unificaron en el puesto/etapa 'gerente'.
                     check (stage in ('secretaria','gerente','coordinador','analista','correccion',
-                                      'area-correccion','juridico','publicacion','publicado',
-                                      'adjudicado','desierto','pendiente-pago','cerrado','cancelado')),
+                                      'area-correccion','coordinador-revision','juridico','publicacion',
+                                      'publicado','adjudicado','desierto','pendiente-pago','cerrado','cancelado')),
   secretaria_id   uuid references public.profiles (id), -- histórico: ya no se asigna en procesos nuevos (ver gerente_id)
   gerente_id      uuid references public.profiles (id),
   coordinador_id  uuid references public.profiles (id),
@@ -203,11 +203,12 @@ insert into public.app_settings (key, value) values ('testing_features_enabled',
 -- la aplicación a partir de case_events, que mientras dure la prueba se
 -- vuelve visible para todos (ver la política adicional sobre case_events).
 create table public.chat_messages (
-  id           uuid primary key default gen_random_uuid(),
-  author_id    uuid references public.profiles (id),
-  author_name  text not null default '',
-  body         text not null,
-  created_at   timestamptz not null default now()
+  id            uuid primary key default gen_random_uuid(),
+  author_id     uuid references public.profiles (id),
+  author_name   text not null default '',
+  body          text not null,
+  mentioned_ids uuid[] not null default '{}',  -- ids de perfiles etiquetados con @ en este mensaje
+  created_at    timestamptz not null default now()
 );
 
 -- ============================================================================
@@ -254,12 +255,15 @@ as $$
   select area_id from public.profiles where id = auth.uid();
 $$;
 
--- ¿Puede la persona actual ver este proceso? Secretaría, Gerencia y
--- Jurídico ven todos los procesos (necesitan visión completa del flujo).
--- Coordinador y Analista solo ven los procesos que tienen asignados a
--- ellos mismos (aunque el proceso ya haya avanzado a otra etapa). Área
--- requirente solo ve los procesos de su propia área. Observador ve todos
--- los procesos igual que Secretaría/Gerencia/Jurídico, pero (a diferencia
+-- ¿Puede la persona actual ver este proceso? Jurídico ve todos los
+-- procesos (necesita visión completa del flujo). Secretaría y Gerencia de
+-- Compras (puesto 'gerente', ya unificado) solo ven los procesos SIN NADIE
+-- asignado todavía como gerente/secretaría, o los que tienen asignados a
+-- ellos mismos — no ven los que ya están en manos de otra persona de su
+-- mismo puesto. Coordinador y Analista solo ven los procesos que tienen
+-- asignados a ellos mismos (aunque el proceso ya haya avanzado a otra
+-- etapa). Área requirente solo ve los procesos de su propia área.
+-- Observador ve todos los procesos igual que Jurídico, pero (a diferencia
 -- de esos puestos) no aparece en ninguna política de escritura de este
 -- archivo — por diseño, es un puesto de solo lectura: ningún botón de
 -- acción le queda habilitado en ninguna etapa, para dar acceso de
@@ -279,8 +283,8 @@ as $$
     where c.id = target_case_id
       and (
         public.is_admin()
-        or public.has_role('secretaria')
-        or public.has_role('gerente')
+        or (public.has_role('secretaria') and (c.secretaria_id is null or c.secretaria_id = auth.uid()))
+        or (public.has_role('gerente') and (c.gerente_id is null or c.gerente_id = auth.uid()))
         or public.has_role('juridico')
         or public.has_role('observador')
         or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
@@ -307,8 +311,8 @@ as $$
     where c.id = target_case_id
       and (
         public.is_admin()
-        or public.has_role('secretaria')
-        or public.has_role('gerente')
+        or (public.has_role('secretaria') and (c.secretaria_id is null or c.secretaria_id = auth.uid()))
+        or (public.has_role('gerente') and (c.gerente_id is null or c.gerente_id = auth.uid()))
         or public.has_role('juridico')
         or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
         or (public.has_role('analista') and c.analista_id = auth.uid())
@@ -450,12 +454,24 @@ begin
   -- para cualquier proceso que, por lo que sea, siga en esa etapa (antes de
   -- correr la migración de datos, o en un proyecto que aún no la corrió) —
   -- así puede seguir avanzando en vez de quedar atascado.
+  -- Desde 'analista' (y desde 'correccion', su variante de corrección) el
+  -- pliego YA NO va directo a Jurídico: vuelve primero a Coordinación
+  -- ('coordinador-revision'), que lo revisa y de ahí decide el destino
+  -- según el tipo de proceso (ver más abajo) — solo Coordinación envía a
+  -- Jurídico, y solo para procesos de licitación; las compras menores van
+  -- directo a Publicación, sin pasar por Jurídico.
   allowed := case old.stage
     when 'secretaria'      then array['gerente','cancelado']
     when 'gerente'         then array['coordinador','area-correccion','cancelado']
     when 'coordinador'     then array['analista','gerente','area-correccion','cancelado']
-    when 'analista'        then array['juridico','gerente','coordinador','area-correccion','cancelado']
-    when 'correccion'      then array['juridico','area-correccion','cancelado']
+    when 'analista'        then array['coordinador-revision','gerente','coordinador','area-correccion','cancelado']
+    when 'correccion'      then array['coordinador-revision','area-correccion','cancelado']
+    when 'coordinador-revision' then
+      case new.tipo
+        when 'menor'      then array['publicacion','gerente','cancelado']
+        when 'licitacion' then array['juridico','gerente','cancelado']
+        else array[]::text[]
+      end
     when 'area-correccion' then array['analista','cancelado']
     when 'juridico'        then array['publicacion','gerente','coordinador','analista','area-correccion','cancelado']
     when 'publicacion'     then array['publicado','cancelado']
@@ -553,9 +569,11 @@ create policy "areas_write_admin_only"
   with check (public.is_admin());
 
 -- ---------- cases ----------
--- Secretaría, Gerencia, Jurídico y el administrador ven todos los procesos.
--- Coordinador y Analista solo ven los que tienen asignados a ellos; Área
--- requirente solo ve los de su propia área — ver can_view_case() arriba.
+-- Jurídico y el administrador ven todos los procesos. Secretaría y
+-- Gerencia de Compras solo ven los que no tienen nadie asignado en ese
+-- puesto todavía, o los que tienen asignados a ellos mismos. Coordinador
+-- y Analista solo ven los que tienen asignados a ellos; Área requirente
+-- solo ve los de su propia área — ver can_view_case() arriba.
 create policy "cases_select_scoped"
   on public.cases for select
   to authenticated
@@ -581,15 +599,19 @@ create policy "cases_update_stage_owner"
     public.is_admin()
     or (stage = 'secretaria' and public.has_role('secretaria') and (secretaria_id is null or secretaria_id = auth.uid()))
     or (stage = 'gerente' and public.has_role('gerente') and (gerente_id is null or gerente_id = auth.uid()))
-    or (stage = 'publicacion' and public.has_role('gerente'))
+    or (stage = 'publicacion' and public.has_role('gerente') and (gerente_id is null or gerente_id = auth.uid()))
     or (stage = 'coordinador' and coordinador_id = auth.uid())
+    or (stage = 'coordinador-revision' and coordinador_id = auth.uid())
     or (stage in ('analista','correccion') and analista_id = auth.uid())
     or (stage = 'area-correccion' and public.has_role('area') and area_id = public.my_area_id())
     or (stage = 'juridico' and public.has_role('juridico'))
     -- etapas posteriores a la publicación (adjudicación, orden de compra,
     -- pago, cierre) las administra Gerencia de Compras, igual que el resto
-    -- del seguimiento post-publicación en el Excel que este software reemplaza.
-    or (stage in ('publicado','adjudicado','pendiente-pago') and public.has_role('gerente'))
+    -- del seguimiento post-publicación en el Excel que este software
+    -- reemplaza — pero solo sobre los procesos que puede ver (sin asignar,
+    -- o asignados a ella misma), igual que en el resto del flujo, para que
+    -- nunca pueda modificar por API un proceso que ya no ve en pantalla.
+    or (stage in ('publicado','adjudicado','pendiente-pago') and public.has_role('gerente') and (gerente_id is null or gerente_id = auth.uid()))
   )
   with check (true);  -- el destino válido de cada transición lo controla la aplicación
 
@@ -626,7 +648,7 @@ begin
 
   if not (
     public.is_admin()
-    or public.has_role('gerente')
+    or (public.has_role('gerente') and (c.gerente_id is null or c.gerente_id = auth.uid()))
     or (public.has_role('coordinador') and c.coordinador_id = auth.uid())
     or (public.has_role('analista') and c.analista_id = auth.uid())
   ) then
@@ -796,7 +818,14 @@ begin
     already := already || c.created_by;
   end if;
 
-  for ger in select id from public.profiles where 'gerente' = any(roles) and active loop
+  -- Solo a quien pueda VER el proceso, igual que can_view_case(): Gerencia
+  -- de Compras sin nadie asignado todavía, o asignado a esa misma persona
+  -- — nunca a un gerente al que el proceso ya no le aparece en pantalla.
+  for ger in
+    select id from public.profiles
+    where 'gerente' = any(roles) and active
+      and (c.gerente_id is null or c.gerente_id = id)
+  loop
     if ger.id <> new.actor_id and not (ger.id = any(already)) then
       insert into public.notifications (recipient_id, case_id, kind, title, body)
       values (ger.id, c.id, 'proceso', c.title, resumen);
@@ -853,6 +882,38 @@ create policy "chat_messages_delete_admin_only"
   on public.chat_messages for delete
   to authenticated
   using (public.is_admin());
+
+-- Cada vez que alguien etiqueta a una o más personas en el chat (con @),
+-- les llega una notificación real a la campanita — mismo mecanismo que
+-- fanout_case_event_notifications() arriba, pero sin proceso asociado
+-- (case_id queda en null; kind = 'chat_mention' para que la aplicación
+-- sepa distinguirla y la lleve al chat en vez de a un proceso).
+create or replace function public.fanout_chat_mention_notifications()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid;
+  ids uuid[];
+begin
+  ids := coalesce((select array_agg(distinct x) from unnest(new.mentioned_ids) x), '{}');
+
+  foreach uid in array ids loop
+    if uid is not null and uid <> new.author_id then
+      insert into public.notifications (recipient_id, case_id, kind, title, body)
+      values (uid, null, 'chat_mention', coalesce(nullif(new.author_name, ''), 'Alguien'), new.body);
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+create trigger chat_messages_notify_mentions
+  after insert on public.chat_messages
+  for each row execute procedure public.fanout_chat_mention_notifications();
 
 -- ============================================================================
 -- 5. ALMACENAMIENTO (Storage) — bucket para los archivos adjuntos

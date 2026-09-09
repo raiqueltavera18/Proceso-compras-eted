@@ -329,7 +329,29 @@ ol.timeline li.event::before{ content:""; position:absolute; left:-18px; top:5px
 .chat-msg-body{ font-size:13.5px; color:var(--ink); white-space:pre-wrap; word-break:break-word; line-height:1.4; }
 .chat-msg-time{ font-size:10.5px; color:var(--ink-faint); margin-top:4px; }
 .chat-compose{ display:flex; gap:8px; margin-top:12px; align-items:flex-start; }
-.chat-compose .field{ flex:1; }
+.chat-compose .field{ flex:1; position:relative; }
+.chat-mention{ background:var(--brand-soft); color:var(--brand); font-weight:600; border-radius:4px; padding:0 2px; }
+.chat-msg.mine .chat-mention{ background:rgba(255,255,255,.22); color:#fff; }
+.chat-mention-suggest{
+  position:absolute; bottom:calc(100% + 6px); left:0; width:100%; max-height:180px; overflow-y:auto;
+  background:var(--surface-raised); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card); z-index:40;
+}
+.chat-mention-option{ display:block; width:100%; text-align:left; background:none; border:none; padding:7px 10px; font:inherit; font-size:12.5px; color:var(--ink); cursor:pointer; }
+.chat-mention-option:hover{ background:var(--surface-sunken); }
+
+/* ------------------------------------------------- chat en la barra superior -- */
+.chat-wrap{ position:relative; }
+.chat-dropdown-panel{
+  position:absolute; top:calc(100% + 6px); right:0; width:380px; max-width:92vw; max-height:75vh; overflow-y:auto;
+  background:var(--surface-raised); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-card); z-index:30;
+  padding:10px 10px 12px;
+}
+.chat-dropdown-panel .notif-panel-head{ margin:-10px -10px 8px; }
+.chat-dropdown-panel .dash-subtabs{ margin-bottom:10px; }
+.chat-dropdown-panel .chat-messages{ height:min(46vh,320px); }
+.chat-dropdown-panel .card{ border:none; box-shadow:none; }
+.chat-dropdown-panel .card-pad{ padding:0; }
+.chat-dropdown-panel .status-list{ max-height:min(46vh,320px); overflow-y:auto; }
 
 /* --------------------------------------------------------------- misc --- */
 .area-list{ display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px; }

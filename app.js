@@ -18,6 +18,7 @@
     "coordinador":      { label: "Coordinador",                role: "coordinador" },
     "analista":         { label: "Analista",                   role: "analista" },
     "correccion":       { label: "Analista — resolviendo objeción", role: "analista" },
+    "coordinador-revision": { label: "Coordinador — revisando pliego", role: "coordinador" },
     "area-correccion":  { label: "Área requirente — corrigiendo",   role: "area" },
     "juridico":         { label: "Consultoría Jurídica",       role: "juridico" },
     "publicacion":      { label: "Lista para publicar",        role: "gerente" },
@@ -357,8 +358,8 @@
     },
 
     // ---- chat general y feed de "Actividad reciente" (solo etapa de prueba) ----
-    async sendChatMessage(authorId, authorName, body) {
-      var r = await sb.from("chat_messages").insert({ author_id: authorId, author_name: authorName, body: body }).select().single();
+    async sendChatMessage(authorId, authorName, body, mentionedIds) {
+      var r = await sb.from("chat_messages").insert({ author_id: authorId, author_name: authorName, body: body, mentioned_ids: mentionedIds || [] }).select().single();
       if (r.error) throw r.error;
       return r.data;
     },
@@ -587,6 +588,13 @@
     var content = $("#content");
     return !!(content && content.contains(el));
   }
+  // Igual que isEditingForm() arriba, pero para el mensaje que se esté
+  // redactando en el chat de la barra superior — que vive fuera de
+  // "#content" y por eso no queda cubierto por esa función.
+  function isEditingChatCompose() {
+    var el = document.activeElement;
+    return !!(el && el.id === "chat-compose-input");
+  }
 
   async function refreshData(quiet) {
     try {
@@ -613,6 +621,7 @@
       if (!(quiet && isEditingForm())) renderRoute();
       renderSidebar();
       renderNotifBell();
+      renderChatDropdown();
     } catch (err) {
       console.error(err);
       if (!quiet) showToast("No se pudo actualizar", String(err.message || err), true);
@@ -731,12 +740,14 @@
   }
 
   // ============================================================ shell/nav
+  // El Chat general y "Todos los procesos" ya no son una pestaña del menú
+  // lateral: viven en el ícono 💬 de la barra superior, junto a la
+  // campanita de notificaciones — ver renderChatDropdown() más abajo.
   var TABS = [
     { key: "home", label: "Inicio", icon: "🏠" },
     { key: "nueva", label: "Nueva solicitud", icon: "➕" },
     { key: "procesos", label: "Procesos en curso", icon: "📋" },
     { key: "panorama", label: "Dashboard", icon: "📊" },
-    { key: "chat", label: "Chat", icon: "💬" }, // solo mientras dure la etapa de prueba — ver testingFeaturesEnabled()
     { key: "areas", label: "Áreas y usuarios", icon: "🏢" }
   ];
 
@@ -755,6 +766,10 @@
       '<div class="topbar-spacer"></div>' +
       '<button type="button" class="topbar-btn" id="theme-toggle"></button>' +
       '<button type="button" class="topbar-btn" id="refresh-btn">⟳ Actualizar</button>' +
+      '<div class="chat-wrap" id="chat-wrap" hidden>' +
+      '<button type="button" class="topbar-btn" id="chat-toggle">💬<span class="notif-bell-badge" id="chat-badge" hidden>0</span></button>' +
+      '<div class="chat-dropdown-panel" id="chat-dropdown-panel" hidden></div>' +
+      "</div>" +
       '<div class="notif-wrap">' +
       '<button type="button" class="topbar-btn" id="notif-bell">🔔<span class="notif-bell-badge" id="notif-badge" hidden>0</span></button>' +
       '<div class="notif-panel" id="notif-panel" hidden></div>' +
@@ -770,6 +785,7 @@
     renderTopUser();
     renderRoute();
     renderNotifBell();
+    renderChatDropdown();
 
     $("#refresh-btn").addEventListener("click", function () { refreshData(); });
     $("#user-chip").addEventListener("click", onUserChipClick);
@@ -778,11 +794,23 @@
       ev.stopPropagation();
       var panel = $("#notif-panel");
       if (panel) panel.hidden = !panel.hidden;
+      var chatPanel = $("#chat-dropdown-panel");
+      if (chatPanel) chatPanel.hidden = true;
     });
     $("#notif-panel").addEventListener("click", function (ev) { ev.stopPropagation(); });
+    $("#chat-toggle").addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var panel = $("#chat-dropdown-panel");
+      if (panel) panel.hidden = !panel.hidden;
+      var notifPanel = $("#notif-panel");
+      if (notifPanel) notifPanel.hidden = true;
+    });
+    $("#chat-dropdown-panel").addEventListener("click", function (ev) { ev.stopPropagation(); });
     document.addEventListener("click", function () {
       var panel = $("#notif-panel");
       if (panel) panel.hidden = true;
+      var chatPanel = $("#chat-dropdown-panel");
+      if (chatPanel) chatPanel.hidden = true;
     });
 
     if (!window.__eted_interval) {
@@ -823,7 +851,7 @@
       body = '<p class="notif-empty">No tienes notificaciones todavía.</p>';
     } else {
       body = list.slice(0, 30).map(function (n) {
-        return '<button type="button" class="notif-item' + (n.read ? "" : " unread") + '" data-notif-id="' + esc(n.id) + '" data-case-id="' + esc(n.case_id || "") + '">' +
+        return '<button type="button" class="notif-item' + (n.read ? "" : " unread") + '" data-notif-id="' + esc(n.id) + '" data-case-id="' + esc(n.case_id || "") + '" data-kind="' + esc(n.kind || "") + '">' +
           '<div class="n-title">' + esc(n.title) + "</div>" +
           (n.body ? '<div class="n-body">' + esc(n.body) + "</div>" : "") +
           '<div class="n-time">' + fmtDateTime(n.created_at) + "</div>" +
@@ -851,6 +879,7 @@
       btn.addEventListener("click", async function () {
         var notifId = btn.getAttribute("data-notif-id");
         var caseId = btn.getAttribute("data-case-id");
+        var kind = btn.getAttribute("data-kind");
         panel.hidden = true;
         try {
           await DB.markNotificationRead(notifId);
@@ -858,7 +887,14 @@
         } catch (err) {
           console.error(err);
         }
-        if (caseId) goToCase(caseId);
+        if (kind === "chat_mention") {
+          state.chatSubtab = "general";
+          renderChatDropdown();
+          var chatPanel = $("#chat-dropdown-panel");
+          if (chatPanel) chatPanel.hidden = false;
+        } else if (caseId) {
+          goToCase(caseId);
+        }
       });
     });
   }
@@ -908,11 +944,7 @@
     var pending = pendingForMe();
     var activeN = activeCasesCount();
     var pendingProfiles = pendingProfilesCount();
-    // La administradora sigue viendo "Chat" en el menú aunque lo haya
-    // apagado (para poder revisar el historial o volver a activarlo);
-    // para todos los demás, desaparece del todo mientras esté apagado.
-    var visibleTabs = TABS.filter(function (t) { return t.key !== "chat" || testingFeaturesEnabled() || isAdmin(); });
-    nav.innerHTML = visibleTabs.map(function (t) {
+    nav.innerHTML = TABS.map(function (t) {
       var badge = "";
       if (t.key === "home" && pending) badge = '<span class="badge">' + pending + "</span>";
       if (t.key === "procesos" && activeN) badge = '<span class="badge">' + activeN + "</span>";
@@ -932,12 +964,7 @@
   }
 
   function renderRoute() {
-    // Si el chat/actividad se apagó a mitad de sesión (otra persona con
-    // la pestaña abierta, o esta misma en otra pestaña) y alguien se había
-    // quedado justo ahí, lo mandamos a "Inicio" en vez de dejarlo en una
-    // pantalla que ya no debería estar disponible.
-    if (state.activeTab === "chat" && !testingFeaturesEnabled() && !isAdmin()) state.activeTab = "home";
-    var titleMap = { home: "Inicio", nueva: "Nueva solicitud de compra", procesos: "Procesos en curso", panorama: "Dashboard", chat: "Chat", areas: "Áreas y usuarios" };
+    var titleMap = { home: "Inicio", nueva: "Nueva solicitud de compra", procesos: "Procesos en curso", panorama: "Dashboard", areas: "Áreas y usuarios" };
     var titleEl = $("#topbar-title");
     if (titleEl) titleEl.textContent = titleMap[state.activeTab] || "";
     var box = $("#content");
@@ -946,7 +973,6 @@
     else if (state.activeTab === "nueva") renderNuevaSolicitud(box);
     else if (state.activeTab === "procesos") renderProcesos(box);
     else if (state.activeTab === "panorama") renderDashboard(box);
-    else if (state.activeTab === "chat") renderChat(box);
     else if (state.activeTab === "areas") renderAreasUsuarios(box);
     wireCaseActionsOnce();
   }
@@ -1285,10 +1311,19 @@
     } else if (c.stage === "analista" || c.stage === "correccion") {
       who = whoLine("analista", c.analista_id, false) + (c.stage === "correccion" ? '<div class="hint" style="margin-bottom:8px;">Objeción de Consultoría Jurídica — ver historial abajo.</div>' : "");
       var analChecks = c.stage === "analista" ? [{ key: "analista:sin_marca", label: "Verifiqué que las especificaciones no señalan marca ni modelo de un suplidor específico" }] : [];
-      body = (c.stage === "analista" ? '<div class="action-row"><div class="field"><label>Nota del pliego (opcional)</label><input type="text" class="note-input" placeholder="Observaciones para Jurídico…"></div></div>' : "") +
+      body = (c.stage === "analista" ? '<div class="action-row"><div class="field"><label>Nota del pliego (opcional)</label><input type="text" class="note-input" placeholder="Observaciones para Coordinación…"></div></div>' : "") +
         checklistHTML(caseId, analChecks) +
-        '<div class="action-buttons">' + actorBtn("to-juridico", c.stage === "correccion" ? "Reenviar a Jurídico ya corregido" : "Enviar pliego a Consultoría Jurídica", "analista", c.analista_id, false, "", caseId, analChecks.map(function (i) { return i.key; })) + "</div>" +
+        '<div class="action-buttons">' + actorBtn("to-coordinador-revision", c.stage === "correccion" ? "Reenviar pliego corregido a Coordinación" : "Enviar pliego a Coordinación", "analista", c.analista_id, false, "", caseId, analChecks.map(function (i) { return i.key; })) + "</div>" +
         devolverSectionHTML(c, "analista", c.analista_id, false);
+    } else if (c.stage === "coordinador-revision") {
+      who = whoLine("coordinador", c.coordinador_id, false);
+      var revChecks = [{ key: "coordinador-revision:revisado", label: "Revisé el pliego elaborado por el Analista y está conforme" }];
+      var revButtons = c.tipo === "menor"
+        ? actorBtn("to-publicacion", "Aprobar pliego y enviar a Publicación (compra menor, sin pasar por Jurídico)", "coordinador", c.coordinador_id, false, "", caseId, revChecks.map(function (i) { return i.key; }))
+        : actorBtn("to-juridico", "Remitir pliego a Consultoría Jurídica", "coordinador", c.coordinador_id, false, "", caseId, revChecks.map(function (i) { return i.key; }));
+      body = checklistHTML(caseId, revChecks) +
+        '<div class="action-buttons">' + revButtons + "</div>" +
+        devolverSectionHTML(c, "coordinador", c.coordinador_id, false);
     } else if (c.stage === "area-correccion") {
       who = whoLine("area", c.area_id, true);
       body = '<div class="action-buttons">' + actorBtn("to-analista-post-area", "Enviar corrección al Analista", "area", c.area_id, true) + "</div>";
@@ -1557,13 +1592,16 @@
         if (!target) { await showAlert("Selecciona un analista."); btn.disabled = false; return; }
         var analP = profileById(target);
         await transition(c, "analista", { actor: actorName, roleLabel: roleLabelForEvent, action: "asignó analista: " + (analP ? analP.full_name : ""), setFields: { analista_id: target, fecha_asignacion_analista: new Date().toISOString().slice(0, 10) }, notify: analP, subject: "Proceso asignado como analista", body: actorName + " te asignó como analista del proceso." });
+      } else if (do_ === "to-coordinador-revision") {
+        var labelCR = c.stage === "correccion" ? "reenvió el pliego corregido a Coordinación" : "elaboró el pliego y lo remitió a Coordinación";
+        await transition(c, "coordinador-revision", { actor: actorName, roleLabel: roleLabelForEvent, action: labelCR, note: note });
       } else if (do_ === "to-juridico") {
-        var label = c.stage === "correccion" ? "reenvió el pliego corregido a Consultoría Jurídica" : "elaboró el pliego y lo remitió a Consultoría Jurídica";
-        await transition(c, "juridico", { actor: actorName, roleLabel: roleLabelForEvent, action: label, note: note });
+        await transition(c, "juridico", { actor: actorName, roleLabel: roleLabelForEvent, action: "revisó el pliego y lo remitió a Consultoría Jurídica" });
       } else if (do_ === "to-analista-post-area") {
         await transition(c, "analista", { actor: actorName, roleLabel: roleLabelForEvent, action: "corrigió la solicitud y la reenvió al Analista", setFields: { fecha_entrada_corregido: new Date().toISOString().slice(0, 10) } });
       } else if (do_ === "to-publicacion") {
-        await transition(c, "publicacion", { actor: actorName, roleLabel: roleLabelForEvent, action: "aprobó el pliego y dio visto bueno" });
+        var pubLabel = c.stage === "coordinador-revision" ? "aprobó el pliego de compra menor y lo remitió directo a Publicación (sin pasar por Jurídico)" : "aprobó el pliego y dio visto bueno";
+        await transition(c, "publicacion", { actor: actorName, roleLabel: roleLabelForEvent, action: pubLabel });
       } else if (do_ === "to-publicado") {
         await transition(c, "publicado", { actor: actorName, roleLabel: roleLabelForEvent, action: "publicó el proceso", setFields: { fecha_publicacion: new Date().toISOString().slice(0, 10) } });
       } else if (do_ === "to-adjudicado") {
@@ -2036,53 +2074,103 @@
   // ============================================================ Chat
   // Chat general del equipo + feed de "Actividad reciente" — pensados
   // SOLO para la etapa de prueba de Procomly (ver testingFeaturesEnabled()
-  // más arriba). El feed no guarda nada propio: reutiliza state.events,
-  // que mientras dure la prueba llega con TODOS los procesos (no solo los
-  // de cada quien) gracias a las políticas de la base de datos.
+  // más arriba). Viven en el ícono 💬 de la barra superior (junto a la
+  // campanita), no en una pestaña del menú lateral — ver
+  // renderChatDropdown() más abajo. El feed no guarda nada propio: viene
+  // ya armado del servidor (recent_activity_feed()), y mientras dure la
+  // prueba cruza TODOS los procesos (no solo los de cada quien) gracias a
+  // las políticas de la base de datos.
   var CHAT_SUBTABS = [
     { key: "general", label: "Chat general" },
     { key: "actividad", label: "Todos los procesos" } // deliberadamente distinto del "Actividad reciente" de Inicio — este cruza TODOS los procesos, no solo los propios
   ];
 
-  function renderChat(box) {
-    if (!testingFeaturesEnabled() && !isAdmin()) {
-      box.innerHTML = '<p class="hint">El chat y la actividad reciente ya no están disponibles.</p>';
-      return;
+  // Borrador de menciones (@) del mensaje que se está redactando ahora
+  // mismo: id de perfil -> nombre insertado en el texto. Se limpia al
+  // enviar el mensaje (o al descartarlo). Solo existe un compositor de
+  // chat a la vez (el del menú desplegable), así que basta una variable
+  // de módulo — no hace falta guardarlo en "state".
+  var chatDraftMentions = {};
+
+  function renderChatDropdown() {
+    var wrap = $("#chat-wrap");
+    var toggleBtn = $("#chat-toggle");
+    var panel = $("#chat-dropdown-panel");
+    var badge = $("#chat-badge");
+    if (!wrap || !toggleBtn || !panel || !badge) return;
+
+    var available = testingFeaturesEnabled() || isAdmin();
+    wrap.hidden = !available;
+    if (!available) { panel.hidden = true; return; }
+
+    var unreadMentions = (state.notifications || []).filter(function (n) { return !n.read && n.kind === "chat_mention"; });
+    if (unreadMentions.length) {
+      badge.hidden = false;
+      badge.textContent = unreadMentions.length > 99 ? "99+" : String(unreadMentions.length);
+    } else {
+      badge.hidden = true;
     }
+
+    // No reconstruir el panel mientras la persona está escribiendo un
+    // mensaje (se perdería lo escrito y el borrador de menciones) — el
+    // contenido se pone al día de todas formas la próxima vez que se
+    // abra o se envíe/borre un mensaje.
+    if (isEditingChatCompose()) return;
+
+    var wasOpen = !panel.hidden;
     var sub = state.chatSubtab || "general";
     if (!CHAT_SUBTABS.some(function (t) { return t.key === sub; })) sub = "general";
-    box.innerHTML =
-      '<div class="testing-banner">🧪 Chat general y actividad reciente — solo mientras dure la etapa de prueba de Procomly.' +
-      (testingFeaturesEnabled() ? "" : " La administradora lo desactivó; solo ella puede verlo por ahora.") + "</div>" +
-      '<div class="dash-subtabs">' + CHAT_SUBTABS.map(function (t) {
-        return '<button type="button" class="dash-subtab-btn' + (t.key === sub ? " active" : "") + '" data-subtab="' + t.key + '">' + esc(t.label) + "</button>";
-      }).join("") + "</div>" +
-      '<div id="chat-subtab-content">' + (sub === "actividad" ? renderChatActividad() : renderChatGeneral()) + "</div>";
 
-    $$(".dash-subtab-btn", box).forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        state.chatSubtab = btn.getAttribute("data-subtab");
-        renderRoute();
+    panel.innerHTML =
+      '<div class="notif-panel-head"><span>Chat</span></div>' +
+      '<div class="dash-subtabs">' + CHAT_SUBTABS.map(function (t) {
+        return '<button type="button" class="dash-subtab-btn' + (t.key === sub ? " active" : "") + '" data-chat-subtab="' + t.key + '">' + esc(t.label) + "</button>";
+      }).join("") + "</div>" +
+      (testingFeaturesEnabled() ? "" : '<p class="hint" style="padding:0 12px 10px;">La administradora desactivó esta función; solo ella puede verla por ahora.</p>') +
+      '<div id="chat-dropdown-content">' + (sub === "actividad" ? renderChatActividad() : renderChatGeneral()) + "</div>";
+    panel.hidden = !wasOpen;
+
+    $$(".dash-subtab-btn", panel).forEach(function (btn) {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        state.chatSubtab = btn.getAttribute("data-chat-subtab");
+        renderChatDropdown();
       });
     });
-    $$("[data-case-id]", box).forEach(function (el) {
-      el.addEventListener("click", function () { goToCase(el.getAttribute("data-case-id")); });
+    $$("[data-case-id]", panel).forEach(function (el) {
+      el.addEventListener("click", function () {
+        panel.hidden = true;
+        goToCase(el.getAttribute("data-case-id"));
+      });
     });
 
-    var msgsBox = $("#chat-messages-list", box);
+    var msgsBox = $("#chat-messages-list", panel);
     if (msgsBox) msgsBox.scrollTop = msgsBox.scrollHeight;
 
-    var sendBtn = $("#chat-send-btn", box);
-    var input = $("#chat-compose-input", box);
-    if (sendBtn && input) {
-      sendBtn.addEventListener("click", onSendChatMessage);
-      input.addEventListener("keydown", function (ev) {
-        if (ev.key === "Enter") { ev.preventDefault(); onSendChatMessage(); }
+    wireChatCompose(panel);
+
+    $$(".chat-msg-delete", panel).forEach(function (b) {
+      b.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        onDeleteChatMessage(b.getAttribute("data-msg-id"));
       });
-    }
-    $$(".chat-msg-delete", box).forEach(function (b) {
-      b.addEventListener("click", function () { onDeleteChatMessage(b.getAttribute("data-msg-id")); });
     });
+  }
+
+  // Resalta las menciones (@Nombre) ya guardadas en un mensaje — se hace
+  // sobre el texto YA escapado con esc(), reemplazando "@Nombre" (también
+  // escapado) por el mismo texto envuelto en un span, así nunca se abre
+  // la puerta a inyectar HTML por esta vía.
+  function renderChatMessageBody(m) {
+    var body = esc(m.body || "");
+    (m.mentioned_ids || []).forEach(function (id) {
+      var p = profileById(id);
+      var name = p ? (p.full_name || p.email || "") : "";
+      if (!name) return;
+      var needle = "@" + esc(name);
+      body = body.split(needle).join('<span class="chat-mention">' + needle + "</span>");
+    });
+    return body;
   }
 
   function renderChatGeneral() {
@@ -2096,16 +2184,78 @@
             '<div class="chat-msg-head"><span class="chat-msg-author">' + esc(m.author_name || "—") + "</span>" +
             (isAdmin() ? '<button type="button" class="chat-msg-delete" data-msg-id="' + esc(m.id) + '" title="Borrar mensaje">×</button>' : "") +
             "</div>" +
-            '<div class="chat-msg-body">' + esc(m.body) + "</div>" +
+            '<div class="chat-msg-body">' + renderChatMessageBody(m) + "</div>" +
             '<div class="chat-msg-time">' + fmtDateTime(m.created_at) + "</div>" +
             "</div>";
         }).join("");
     return '<div class="card"><div class="card-pad">' +
       '<div class="chat-messages" id="chat-messages-list">' + body + "</div>" +
       (canWrite
-        ? '<div class="chat-compose"><div class="field"><input type="text" id="chat-compose-input" placeholder="Escribe un mensaje…" maxlength="2000"></div><button type="button" class="btn" id="chat-send-btn">Enviar</button></div>'
+        ? '<div class="chat-compose"><div class="field"><input type="text" id="chat-compose-input" autocomplete="off" placeholder="Escribe un mensaje… (usa @ para etiquetar a alguien)" maxlength="2000">' +
+          '<div class="chat-mention-suggest" id="chat-mention-suggest" hidden></div></div>' +
+          '<button type="button" class="btn" id="chat-send-btn">Enviar</button></div>'
         : '<p class="hint" style="margin-top:10px;">' + (testingFeaturesEnabled() ? "Observador (solo lectura) puede leer el chat pero no escribir." : "El chat está desactivado — solo la administradora puede verlo por ahora.") + "</p>") +
       "</div></div>";
+  }
+
+  // ------------------------------------------------- etiquetar con @ ----
+  // Busca un "@consulta" pegado al cursor (sin espacios de por medio) para
+  // decidir si hay que mostrar sugerencias de a quién etiquetar.
+  function currentMentionQuery(input) {
+    var pos = input.selectionStart != null ? input.selectionStart : input.value.length;
+    var before = input.value.slice(0, pos);
+    var m = /(?:^|\s)@([^\s@]{0,30})$/.exec(before);
+    return m ? m[1] : null;
+  }
+  function renderMentionSuggestions(input, suggestBox) {
+    if (!suggestBox) return;
+    var q = currentMentionQuery(input);
+    if (q == null) { suggestBox.hidden = true; suggestBox.innerHTML = ""; return; }
+    var qLower = q.toLowerCase();
+    var matches = assignedProfiles().filter(function (p) {
+      if (state.me && p.id === state.me.id) return false;
+      var name = (p.full_name || p.email || "").toLowerCase();
+      return !qLower || name.indexOf(qLower) !== -1;
+    }).slice(0, 6);
+    if (!matches.length) { suggestBox.hidden = true; suggestBox.innerHTML = ""; return; }
+    suggestBox.innerHTML = matches.map(function (p) {
+      var name = p.full_name || p.email || "";
+      return '<button type="button" class="chat-mention-option" data-mention-id="' + esc(p.id) + '" data-mention-name="' + esc(name) + '">' + esc(name) + "</button>";
+    }).join("");
+    suggestBox.hidden = false;
+    $$(".chat-mention-option", suggestBox).forEach(function (b) {
+      b.addEventListener("mousedown", function (ev) {
+        ev.preventDefault(); // no perder el foco del input al hacer clic
+        insertMention(input, b.getAttribute("data-mention-id"), b.getAttribute("data-mention-name"));
+        suggestBox.hidden = true;
+        suggestBox.innerHTML = "";
+      });
+    });
+  }
+  function insertMention(input, id, name) {
+    var pos = input.selectionStart != null ? input.selectionStart : input.value.length;
+    var val = input.value;
+    var before = val.slice(0, pos);
+    var after = val.slice(pos);
+    var m = /(?:^|\s)@([^\s@]{0,30})$/.exec(before);
+    var atIdx = m ? (m[0].charAt(0) === "@" ? before.length - m[0].length : before.length - m[0].length + 1) : before.length;
+    var newBefore = before.slice(0, atIdx) + "@" + name + " ";
+    input.value = newBefore + after;
+    input.focus();
+    input.setSelectionRange(newBefore.length, newBefore.length);
+    chatDraftMentions[id] = name;
+  }
+  function wireChatCompose(container) {
+    var input = $("#chat-compose-input", container);
+    var sendBtn = $("#chat-send-btn", container);
+    var suggestBox = $("#chat-mention-suggest", container);
+    if (!input) return;
+    if (sendBtn) sendBtn.addEventListener("click", onSendChatMessage);
+    input.addEventListener("input", function () { renderMentionSuggestions(input, suggestBox); });
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && suggestBox && !suggestBox.hidden) { suggestBox.hidden = true; return; }
+      if (ev.key === "Enter" && (!suggestBox || suggestBox.hidden)) { ev.preventDefault(); onSendChatMessage(); }
+    });
   }
 
   // Nota: la "Actividad reciente" NO se arma con state.events/state.cases
@@ -2137,8 +2287,16 @@
     var btn = $("#chat-send-btn");
     if (btn) btn.disabled = true;
     try {
-      await DB.sendChatMessage(state.me.id, state.me.full_name || state.me.email, body);
+      // Solo se etiqueta a quien todavía aparece mencionado en el texto
+      // final (si borró el "@Nombre" después de elegirlo, ya no cuenta).
+      var mentionedIds = Object.keys(chatDraftMentions).filter(function (id) {
+        return body.indexOf("@" + chatDraftMentions[id]) !== -1;
+      });
+      await DB.sendChatMessage(state.me.id, state.me.full_name || state.me.email, body, mentionedIds);
       input.value = "";
+      chatDraftMentions = {};
+      var suggestBox = $("#chat-mention-suggest");
+      if (suggestBox) { suggestBox.hidden = true; suggestBox.innerHTML = ""; }
       await refreshData();
     } catch (err) {
       console.error(err);

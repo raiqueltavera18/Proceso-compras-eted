@@ -1,8 +1,22 @@
-begin;
+# macOS
+.DS_Store
 
-delete from public.cases;
-alter sequence public.cases_case_number_seq restart with 1;
+# Windows
+Thumbs.db
+desktop.ini
 
-commit;
+# Editores
+.vscode/
+.idea/
+*.swp
+*~
 
-select count(*) as procesos_restantes from public.cases;
+# Logs / temporales
+*.log
+.tmp/
+
+# Archivos de prueba local (mock de Supabase) — no forman parte del sitio
+mock-supabase.js
+test-seed.js
+test-config.js
+test-index.html
