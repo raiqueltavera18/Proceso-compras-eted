@@ -63,7 +63,6 @@
   var ATTACH_MAX_BYTES = 8 * 1024 * 1024; // 8 MB por archivo (Supabase Storage soporta más; límite conservador aquí)
   var ATTACH_BUCKET = "attachments";
   var THEME_KEY = "eted-licitaciones-theme-v2";
-  var THEME_LABELS = { auto: "🌗 Automático", light: "☀️ Claro", dark: "🌙 Oscuro" };
 
   // ================================================================ dom ==
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
@@ -73,6 +72,53 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+
+  // ============================================================= íconos ==
+  // Set propio de íconos SVG de línea (minimalistas, trazo uniforme) que
+  // reemplaza los emoji usados anteriormente en toda la interfaz. Heredan
+  // el color del texto (currentColor), así que se adaptan solos a modo
+  // claro/oscuro sin necesitar variantes por tema.
+  var ICON_PATHS = {
+    home: '<path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9"/>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    "clipboard-list": '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1Z"/><line x1="8" y1="11.5" x2="16" y2="11.5"/><line x1="8" y1="15.5" x2="16" y2="15.5"/>',
+    "chart-bar": '<line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3" height="7" rx="0.5"/><rect x="11" y="8" width="3" height="11" rx="0.5"/><rect x="16" y="4" width="3" height="15" rx="0.5"/>',
+    building: '<rect x="5" y="3" width="14" height="18" rx="1.5"/><rect x="8.3" y="6.3" width="2.4" height="2.4" rx="0.4"/><rect x="13.3" y="6.3" width="2.4" height="2.4" rx="0.4"/><rect x="8.3" y="10.6" width="2.4" height="2.4" rx="0.4"/><rect x="13.3" y="10.6" width="2.4" height="2.4" rx="0.4"/><line x1="10" y1="21" x2="10" y2="17.3"/><line x1="14" y1="21" x2="14" y2="17.3"/>',
+    menu: '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>',
+    refresh: '<path d="M3.5 12a8.5 8.5 0 0 1 14.5-6"/><path d="M18 2.5V7h-4.5"/><path d="M20.5 12a8.5 8.5 0 0 1-14.5 6"/><path d="M6 21.5V17h4.5"/>',
+    "message-circle": '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.3-.24-3.35-.68L4 21l1.72-4.55A8.5 8.5 0 1 1 21 11.5Z"/>',
+    bell: '<path d="M6 9.5a6 6 0 0 1 12 0c0 4.6 1.8 5.7 2 6H4c.2-.3 2-1.4 2-6Z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+    x: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
+    "alert-triangle": '<path d="M10.87 4.5 2.38 19a1.5 1.5 0 0 0 1.3 2.25h16.64a1.5 1.5 0 0 0 1.3-2.25L13.13 4.5a1.5 1.5 0 0 0-2.26 0Z"/><line x1="12" y1="9.7" x2="12" y2="14.2"/><circle cx="12" cy="17.3" r="0.95" fill="currentColor" stroke="none"/>',
+    "check-circle": '<circle cx="12" cy="12" r="8.5"/><path d="m8.2 12.3 2.6 2.6 4.9-5.7"/>',
+    edit: '<path d="M14.2 4.8 19.2 9.8 8 21H3v-5Z"/><line x1="12.2" y1="6.8" x2="17.2" y2="11.8"/>',
+    paperclip: '<path d="M20.3 12.2 12 20.5a5 5 0 0 1-7-7l8.7-8.7a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.3 6.5 8.7 6 8.7-6"/>',
+    "corner-up-left": '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5V16"/>',
+    "file-text": '<path d="M7 3h6.5L18 7.5V21H7Z"/><path d="M13.5 3v4.5H18"/><line x1="9.5" y1="12.2" x2="15" y2="12.2"/><line x1="9.5" y1="15.8" x2="15" y2="15.8"/>',
+    download: '<path d="M12 3.5v11.5"/><path d="m7 10.5 5 5 5-5"/><path d="M4.5 19.5h15"/>',
+    beaker: '<path d="M9.3 3h5.4"/><path d="M10.3 3v6.8L5 18.2a1.9 1.9 0 0 0 1.6 2.8h10.8a1.9 1.9 0 0 0 1.6-2.8L13.7 9.8V3"/><line x1="7.7" y1="14.3" x2="16.3" y2="14.3"/>',
+    user: '<circle cx="12" cy="8.2" r="3.4"/><path d="M5 20c0-3.87 3.13-6.5 7-6.5s7 2.63 7 6.5"/>',
+    "id-badge": '<rect x="5" y="4" width="14" height="17" rx="2"/><circle cx="12" cy="10.3" r="2.2"/><line x1="8.6" y1="16.3" x2="15.4" y2="16.3"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><line x1="12" y1="2.2" x2="12" y2="4.6"/><line x1="12" y1="19.4" x2="12" y2="21.8"/><line x1="2.2" y1="12" x2="4.6" y2="12"/><line x1="19.4" y1="12" x2="21.8" y2="12"/><line x1="4.93" y1="4.93" x2="6.64" y2="6.64"/><line x1="17.36" y1="17.36" x2="19.07" y2="19.07"/><line x1="4.93" y1="19.07" x2="6.64" y2="17.36"/><line x1="17.36" y1="6.64" x2="19.07" y2="4.93"/>',
+    moon: '<path d="M20 14.2A8.5 8.5 0 1 1 9.8 4a7 7 0 0 0 10.2 10.2Z"/>',
+    monitor: '<rect x="3" y="4.5" width="18" height="12" rx="1.6"/><line x1="8" y1="20" x2="16" y2="20"/><line x1="12" y1="16.5" x2="12" y2="20"/>'
+  };
+  function icon(name, opts) {
+    opts = opts || {};
+    var d = ICON_PATHS[name];
+    if (!d) return "";
+    var size = opts.size || 16;
+    var cls = "icon" + (opts.cls ? " " + opts.cls : "");
+    return '<svg class="' + cls + '" width="' + size + '" height="' + size +
+      '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + d + "</svg>";
+  }
+  var THEME_LABELS = {
+    auto: icon("monitor", { size: 14 }) + " Automático",
+    light: icon("sun", { size: 14 }) + " Claro",
+    dark: icon("moon", { size: 14 }) + " Oscuro"
+  };
   function initials(name) {
     var parts = String(name || "?").trim().split(/\s+/).filter(Boolean);
     if (!parts.length) return "?";
@@ -118,7 +164,8 @@
   function showToast(title, subtitle, isError) {
     var el = document.createElement("div");
     el.className = "toast" + (isError ? " toast-error" : "");
-    el.innerHTML = '<div class="t-title">' + esc(title) + "</div>" + (subtitle ? "<div>" + esc(subtitle) + "</div>" : "");
+    var ic = icon(isError ? "alert-triangle" : "check-circle", { size: 15, cls: "toast-icon" });
+    el.innerHTML = '<div class="t-title">' + ic + "<span>" + esc(title) + "</span></div>" + (subtitle ? "<div>" + esc(subtitle) + "</div>" : "");
     document.body.appendChild(el);
     requestAnimationFrame(function () { el.classList.add("show"); });
     setTimeout(function () {
@@ -173,7 +220,7 @@
     else if (mode === "dark") root.setAttribute("data-theme", "dark");
     else root.removeAttribute("data-theme");
     var btn = $("#theme-toggle");
-    if (btn) btn.textContent = THEME_LABELS[mode] || THEME_LABELS.auto;
+    if (btn) btn.innerHTML = THEME_LABELS[mode] || THEME_LABELS.auto;
   }
   function cycleTheme() {
     var order = ["auto", "light", "dark"];
@@ -439,7 +486,7 @@
       return '<div class="who">Actuando como <strong>' + esc(state.me.full_name || state.me.email) + "</strong></div>";
     }
     if (isAdmin()) {
-      return '<div class="who admin-who">⚠ Modo administrador — puedes forzar esta acción, pero quedará registrada a tu nombre, no al de ' + esc(ROLE_LABELS[role] || role) + ".</div>";
+      return '<div class="who admin-who">' + icon("alert-triangle", { size: 14 }) + ' Modo administrador — puedes forzar esta acción, pero quedará registrada a tu nombre, no al de ' + esc(ROLE_LABELS[role] || role) + ".</div>";
     }
     var label = (ROLE_LABELS[role] || role) + (assignedId ? (matchArea ? " (" + esc(areaName(assignedId)) + ")" : " (" + esc((profileById(assignedId) || {}).full_name || "") + ")") : "");
     return '<div class="who locked">Esta acción le corresponde a: ' + label + ". Si te corresponde a ti, inicia sesión con tu propia cuenta.</div>";
@@ -634,7 +681,7 @@
   function renderNotConfigured() {
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><span class="logo-dot"></span><span>Procomly</span></div>' +
+      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
       '<p class="sub">Todavía falta conectar esta página a tu proyecto de Supabase.</p>' +
       '<div class="auth-note">Abre el archivo <code>config.js</code> de este sitio y pega ahí la URL de tu proyecto y la clave pública ("anon key"). Sigue el paso a paso completo en <code>SETUP.md</code>.</div>' +
       "</div></div>";
@@ -642,7 +689,7 @@
   function renderLoadError(err) {
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><span class="logo-dot"></span><span>Procomly</span></div>' +
+      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
       '<p class="sub">No se pudo cargar la información.</p>' +
       '<div class="auth-error">' + esc(String((err && err.message) || err)) + "</div>" +
       '<p class="hint">Revisa que el esquema SQL (supabase-schema.sql) se haya ejecutado en tu proyecto, y que la URL/clave en config.js sean correctas. Si el problema sigue, cierra sesión e inténtalo de nuevo.</p>' +
@@ -655,7 +702,7 @@
   function renderDeactivatedScreen() {
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><span class="logo-dot"></span><span>Procomly</span></div>' +
+      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
       '<p class="sub">Tu cuenta fue desactivada por un administrador de Procomly.</p>' +
       '<p class="hint">Ya no tienes acceso a los procesos ni a ninguna acción dentro de la aplicación. Si crees que es un error, contacta al administrador para que reactive tu cuenta.</p>' +
       '<button type="button" class="btn ghost" id="deactivated-signout" style="margin-top:12px;">Cerrar sesión</button>' +
@@ -669,7 +716,7 @@
     var mode = state.authMode;
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><span class="logo-dot"></span><span>Procomly</span></div>' +
+      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
       '<p class="sub">Proceso de Compras y Licitaciones Automatizado — ETED · Gerencia de Compras.</p>' +
       '<div class="auth-tabs">' +
       '<button type="button" class="auth-tab' + (mode === "signin" ? " active" : "") + '" data-mode="signin">Iniciar sesión</button>' +
@@ -744,34 +791,37 @@
   // lateral: viven en el ícono 💬 de la barra superior, junto a la
   // campanita de notificaciones — ver renderChatDropdown() más abajo.
   var TABS = [
-    { key: "home", label: "Inicio", icon: "🏠" },
-    { key: "nueva", label: "Nueva solicitud", icon: "➕" },
-    { key: "procesos", label: "Procesos en curso", icon: "📋" },
-    { key: "panorama", label: "Dashboard", icon: "📊" },
-    { key: "areas", label: "Áreas y usuarios", icon: "🏢" }
+    { key: "home", label: "Inicio", icon: "home" },
+    { key: "nueva", label: "Nueva solicitud", icon: "plus" },
+    { key: "procesos", label: "Procesos en curso", icon: "clipboard-list" },
+    { key: "panorama", label: "Dashboard", icon: "chart-bar" },
+    { key: "areas", label: "Áreas y usuarios", icon: "building" }
   ];
 
   function renderShell() {
     document.body.innerHTML =
       '<div class="app-shell">' +
       '<aside class="sidebar" id="sidebar">' +
-      '<div class="sidebar-brand"><span class="logo-dot"></span><span>Procomly</span></div>' +
+      '<div class="sidebar-brand"><img class="sidebar-brand-mark" src="assets/procomly-mark-white.svg" alt="" /><span>Procomly</span></div>' +
       '<nav class="sidebar-nav" id="sidebar-nav"></nav>' +
-      '<div class="sidebar-foot">Gerencia de Compras · ETED</div>' +
+      '<div class="sidebar-foot">' +
+      '<img class="sidebar-foot-mark" src="assets/procomly-mark-white.svg" alt="Procomly" />' +
+      '<div class="sidebar-foot-text"><span class="sidebar-foot-brand">Procomly</span><span class="sidebar-foot-org">Gerencia de Compras · <b>ETED</b></span></div>' +
+      "</div>" +
       "</aside>" +
       '<div class="main-col">' +
       '<header class="topbar">' +
-      '<button type="button" class="topbar-btn" id="menu-toggle" style="display:none;">☰</button>' +
+      '<button type="button" class="topbar-btn icon-only" id="menu-toggle" style="display:none;">' + icon("menu") + "</button>" +
       '<div class="topbar-title" id="topbar-title"></div>' +
       '<div class="topbar-spacer"></div>' +
       '<button type="button" class="topbar-btn" id="theme-toggle"></button>' +
-      '<button type="button" class="topbar-btn" id="refresh-btn">⟳ Actualizar</button>' +
+      '<button type="button" class="topbar-btn" id="refresh-btn">' + icon("refresh") + " Actualizar</button>" +
       '<div class="chat-wrap" id="chat-wrap" hidden>' +
-      '<button type="button" class="topbar-btn" id="chat-toggle">💬<span class="notif-bell-badge" id="chat-badge" hidden>0</span></button>' +
+      '<button type="button" class="topbar-btn icon-only" id="chat-toggle">' + icon("message-circle") + '<span class="notif-bell-badge" id="chat-badge" hidden>0</span></button>' +
       '<div class="chat-dropdown-panel" id="chat-dropdown-panel" hidden></div>' +
       "</div>" +
       '<div class="notif-wrap">' +
-      '<button type="button" class="topbar-btn" id="notif-bell">🔔<span class="notif-bell-badge" id="notif-badge" hidden>0</span></button>' +
+      '<button type="button" class="topbar-btn icon-only" id="notif-bell">' + icon("bell") + '<span class="notif-bell-badge" id="notif-badge" hidden>0</span></button>' +
       '<div class="notif-panel" id="notif-panel" hidden></div>' +
       "</div>" +
       '<button type="button" class="user-chip" id="user-chip"></button>' +
@@ -951,7 +1001,7 @@
       if (t.key === "areas" && isAdmin() && pendingProfiles) badge = '<span class="badge">' + pendingProfiles + "</span>";
       var alertCls = (t.key === "home" && pending) ? " badge-alert" : "";
       return '<button type="button" class="side-link' + (state.activeTab === t.key ? " active" : "") + alertCls + '" data-tab="' + t.key + '">' +
-        '<span class="ic">' + t.icon + "</span><span>" + esc(t.label) + "</span>" + badge + "</button>";
+        '<span class="ic">' + icon(t.icon, { size: 17 }) + "</span><span>" + esc(t.label) + "</span>" + badge + "</button>";
     }).join("");
     $$(".side-link", nav).forEach(function (b) {
       b.addEventListener("click", function () {
@@ -984,7 +1034,7 @@
       '<div class="modal-actions"><button type="button" id="modal-cancel" class="btn ghost small">Cancelar</button><button type="button" id="modal-ok" class="btn small">Aceptar</button></div>' +
       "</div></div>" +
       '<div id="preview-overlay" class="preview-overlay" hidden><div class="preview-box" role="dialog" aria-modal="true">' +
-      '<div class="preview-header"><span class="preview-title" id="preview-title">Archivo adjunto</span><button type="button" id="preview-close" class="btn ghost small">✕ Cerrar</button></div>' +
+      '<div class="preview-header"><span class="preview-title" id="preview-title">Archivo adjunto</span><button type="button" id="preview-close" class="btn ghost small">' + icon("x", { size: 13 }) + " Cerrar</button></div>" +
       '<div class="preview-content" id="preview-content"></div>' +
       "</div></div>";
   }
@@ -1022,7 +1072,7 @@
   }
   function stuckCardHTML(stats) {
     if (!stats.stuckList.length) return "";
-    return '<div class="card" style="border-left:4px solid var(--critical);"><div class="card-title">⚠ Procesos estancados (más de 3 días en la misma etapa)</div><div class="card-pad">' +
+    return '<div class="card" style="border-left:4px solid var(--critical);"><div class="card-title"><span class="ct-label">' + icon("alert-triangle", { size: 14 }) + " Procesos estancados (más de 3 días en la misma etapa)</span></div><div class=\"card-pad\">" +
       stats.stuckList.map(function (s) {
         return '<div style="display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:5px 0;"><span>' + esc(s.title) + " — <span style=\"color:var(--ink-soft)\">" + esc(s.stage) + '</span></span><span class="num">' + fmtDuration(s.ms) + "</span></div>";
       }).join("") + "</div></div>";
@@ -1127,7 +1177,7 @@
       '<p class="attach-title">Archivos adjuntos (opcional)</p>' +
       '<ul class="attach-list f-staged-list"></ul>' +
       '<p class="attach-empty f-attach-empty">Sin archivos adjuntos todavía.</p>' +
-      '<button type="button" class="btn ghost small f-btn-attach">📎 Adjuntar archivo</button><input type="file" class="f-attach-input" hidden>' +
+      '<button type="button" class="btn ghost small f-btn-attach">' + icon("paperclip", { size: 13 }) + ' Adjuntar archivo</button><input type="file" class="f-attach-input" hidden>' +
       "</div>" +
       '<div class="form-actions"><button type="submit" class="btn">Registrar solicitud</button><span class="hint">Entra al proceso en la etapa de Secretaría Administrativa.</span></div>' +
       "</form></div>";
@@ -1186,7 +1236,7 @@
         if (gerentes.length === 1) {
           await DB.logNotification(gerentes[0].email, gerentes[0].full_name, "Nueva solicitud de compra registrada",
             "Se registró la solicitud \"" + title + "\" (" + areaName(areaId) + ") y quedó asignada a ti en Secretaría y Gerencia de Compras.", created.id);
-          showToast("📧 Notificación enviada (simulada)", "Para: " + gerentes[0].email);
+          showToast("Notificación enviada (simulada)", "Para: " + gerentes[0].email);
         }
         showToast("Solicitud registrada", title);
         state.activeTab = "procesos";
@@ -1242,7 +1292,7 @@
     if (lastEvent && lastEvent.note && !closed) {
       var isReturn = /^devolvió el proceso/.test(lastEvent.action || "");
       returnNoteHTML = '<div class="return-note-box">' +
-        '<p class="return-note-title">' + (isReturn ? "↩ Devuelto por " + esc(lastEvent.actor_name || "") : "📝 Nota de " + esc(lastEvent.actor_name || "")) + "</p>" +
+        '<p class="return-note-title">' + (isReturn ? icon("corner-up-left", { size: 12 }) + " Devuelto por " + esc(lastEvent.actor_name || "") : icon("file-text", { size: 12 }) + " Nota de " + esc(lastEvent.actor_name || "")) + "</p>" +
         '<p class="return-note-text">' + esc(lastEvent.note) + "</p>" +
         "</div>";
     }
@@ -1451,7 +1501,7 @@
           ((a.uploaded_by === (state.me && state.me.id) || isAdmin()) ? '<button type="button" class="btn ghost small attach-delete" data-att-id="' + esc(a.id) + '">Quitar</button>' : "") + "</div></li>";
       }).join("") + "</ul>" +
       '<p class="attach-empty">Sin archivos adjuntos todavía.</p>' +
-      '<button type="button" class="btn ghost small btn-attach">📎 Adjuntar archivo</button><input type="file" class="attach-file-input" hidden>' +
+      '<button type="button" class="btn ghost small btn-attach">' + icon("paperclip", { size: 13 }) + ' Adjuntar archivo</button><input type="file" class="attach-file-input" hidden>' +
       "</div>";
   }
 
@@ -1706,13 +1756,13 @@
 
     if (opts.notify && opts.notify.email) {
       await DB.logNotification(opts.notify.email, opts.notify.full_name, opts.subject || "Proceso actualizado: " + c.title, opts.body || opts.action, c.id);
-      showToast("📧 Notificación enviada (simulada)", "Para: " + opts.notify.email);
+      showToast("Notificación enviada (simulada)", "Para: " + opts.notify.email);
     } else if (opts.notifyArea) {
       var areaUsers = profilesByRole("area").filter(function (p) { return p.area_id === opts.notifyArea; });
       for (var i = 0; i < areaUsers.length; i++) {
         if (areaUsers[i].email) await DB.logNotification(areaUsers[i].email, areaUsers[i].full_name, opts.subject || "Proceso actualizado: " + c.title, opts.body || opts.action, c.id);
       }
-      if (areaUsers.length) showToast("📧 Notificación enviada (simulada)", areaUsers.length + " persona(s) del área");
+      if (areaUsers.length) showToast("Notificación enviada (simulada)", areaUsers.length + " persona(s) del área");
     }
   }
 
@@ -1950,8 +2000,8 @@
 
   function renderDashboardTiempos(stats) {
     return '<div class="page-head-actions" style="margin-bottom:16px; display:flex; gap:8px; flex-wrap:wrap;">' +
-      '<button type="button" class="btn secondary small" id="export-cases-csv-btn">⬇ Descargar procesos (CSV)</button>' +
-      '<button type="button" class="btn secondary small" id="export-csv-btn">⬇ Descargar historial de eventos (CSV)</button>' +
+      '<button type="button" class="btn secondary small" id="export-cases-csv-btn">' + icon("download", { size: 13 }) + " Descargar procesos (CSV)</button>" +
+      '<button type="button" class="btn secondary small" id="export-csv-btn">' + icon("download", { size: 13 }) + " Descargar historial de eventos (CSV)</button>" +
       "</div>" +
       '<div class="chart-grid">' +
       '<div class="card"><div class="card-title">Tiempo promedio por etapa</div><div class="card-pad">' + renderBars(stats.stageAverages) + "</div></div>" +
@@ -2182,7 +2232,7 @@
           var mine = state.me && m.author_id === state.me.id;
           return '<div class="chat-msg' + (mine ? " mine" : "") + '">' +
             '<div class="chat-msg-head"><span class="chat-msg-author">' + esc(m.author_name || "—") + "</span>" +
-            (isAdmin() ? '<button type="button" class="chat-msg-delete" data-msg-id="' + esc(m.id) + '" title="Borrar mensaje">×</button>' : "") +
+            (isAdmin() ? '<button type="button" class="chat-msg-delete" data-msg-id="' + esc(m.id) + '" title="Borrar mensaje">' + icon("x", { size: 12 }) + "</button>" : "") +
             "</div>" +
             '<div class="chat-msg-body">' + renderChatMessageBody(m) + "</div>" +
             '<div class="chat-msg-time">' + fmtDateTime(m.created_at) + "</div>" +
@@ -2373,7 +2423,7 @@
   // clic en cuanto termine la etapa de prueba, sin tocar código.
   function testingToggleCardHTML() {
     var on = testingFeaturesEnabled();
-    return '<div class="card" style="margin-bottom:16px;"><div class="card-title">🧪 Modo de prueba</div><div class="card-pad">' +
+    return '<div class="card" style="margin-bottom:16px;"><div class="card-title"><span class="ct-label">' + icon("beaker", { size: 14 }) + " Modo de prueba</span></div><div class=\"card-pad\">" +
       '<p class="hint" style="margin-bottom:10px;">Controla el chat general y la pestaña "Todos los procesos" (pensados solo para mientras se prueba Procomly). ' +
       (on
         ? "Ahora mismo están <strong>activados</strong>: cualquiera con un puesto asignado (menos Observador) puede escribir en el chat, y todos pueden ver todos los procesos en la pestaña \"Todos los procesos\"."
@@ -2391,7 +2441,7 @@
       return '<span class="area-chip-wrap" data-area-id="' + esc(a.id) + '"><span class="area-chip">' + esc(a.name) + "</span>" +
         (a.manager_name ? '<span class="area-chip-manager">— Resp.: ' + esc(a.manager_name) + "</span>" : "") +
         (a.secretary_name ? '<span class="area-chip-manager">— Secretaria: ' + esc(a.secretary_name) + (a.secretary_contact ? " (" + esc(a.secretary_contact) + ")" : "") + "</span>" : "") +
-        (isAdmin() ? '<button type="button" class="icon-btn area-rename-btn" title="Renombrar">✎</button><button type="button" class="icon-btn area-manager-btn" title="Responsable">🧑</button><button type="button" class="icon-btn area-secretary-btn" title="Secretaria administrativa">📇</button><button type="button" class="icon-btn danger area-remove-btn" title="Quitar">×</button>' : "") +
+        (isAdmin() ? '<button type="button" class="icon-btn area-rename-btn" title="Renombrar">' + icon("edit", { size: 13 }) + '</button><button type="button" class="icon-btn area-manager-btn" title="Responsable">' + icon("user", { size: 13 }) + '</button><button type="button" class="icon-btn area-secretary-btn" title="Secretaria administrativa">' + icon("id-badge", { size: 13 }) + '</button><button type="button" class="icon-btn danger area-remove-btn" title="Quitar">' + icon("x", { size: 13 }) + "</button>" : "") +
         "</span>";
     }).join("");
     if (!isAdmin()) return;
