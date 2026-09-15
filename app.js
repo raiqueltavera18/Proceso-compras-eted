@@ -114,6 +114,21 @@
       '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
       'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + d + "</svg>";
   }
+  // Logo de Procomly, incrustado como SVG en línea (no como <img src="assets/...">)
+  // para que se vea siempre, sin depender de que la carpeta assets/ se haya
+  // subido junto con el resto de los archivos al desplegar el sitio.
+  var PROCOMLY_GLYPH = '<rect x="30" y="24" width="13" height="54" rx="6.5" fill="#FFFFFF"/>' +
+    '<path fill-rule="evenodd" clip-rule="evenodd" d="M57,13 a25,25 0 1 1 0,50 a25,25 0 1 1 0,-50 Z M57,25 a13,13 0 1 0 0,26 a13,13 0 1 0 0,-26 Z" fill="#FFFFFF"/>' +
+    '<circle cx="57" cy="38" r="5" fill="#FFFFFF"/>';
+  function procomlyMark(cls) {
+    // versión de color: cuadro azul institucional redondeado + glifo blanco — para fondos claros.
+    return '<svg class="' + cls + '" viewBox="0 0 100 100" aria-hidden="true" focusable="false">' +
+      '<rect x="0" y="0" width="100" height="100" rx="20" fill="#23458D"/>' + PROCOMLY_GLYPH + "</svg>";
+  }
+  function procomlyMarkWhite(cls) {
+    // solo el glifo en blanco, sin cuadro — para fondos oscuros/de color (sidebar, pie de página).
+    return '<svg class="' + cls + '" viewBox="0 0 100 100" aria-hidden="true" focusable="false">' + PROCOMLY_GLYPH + "</svg>";
+  }
   var THEME_LABELS = {
     auto: icon("monitor", { size: 14 }) + " Automático",
     light: icon("sun", { size: 14 }) + " Claro",
@@ -681,7 +696,7 @@
   function renderNotConfigured() {
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
+      '<div class="auth-brand">' + procomlyMark("auth-brand-mark") + "<span>Procomly</span></div>" +
       '<p class="sub">Todavía falta conectar esta página a tu proyecto de Supabase.</p>' +
       '<div class="auth-note">Abre el archivo <code>config.js</code> de este sitio y pega ahí la URL de tu proyecto y la clave pública ("anon key"). Sigue el paso a paso completo en <code>SETUP.md</code>.</div>' +
       "</div></div>";
@@ -689,7 +704,7 @@
   function renderLoadError(err) {
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
+      '<div class="auth-brand">' + procomlyMark("auth-brand-mark") + "<span>Procomly</span></div>" +
       '<p class="sub">No se pudo cargar la información.</p>' +
       '<div class="auth-error">' + esc(String((err && err.message) || err)) + "</div>" +
       '<p class="hint">Revisa que el esquema SQL (supabase-schema.sql) se haya ejecutado en tu proyecto, y que la URL/clave en config.js sean correctas. Si el problema sigue, cierra sesión e inténtalo de nuevo.</p>' +
@@ -702,7 +717,7 @@
   function renderDeactivatedScreen() {
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
+      '<div class="auth-brand">' + procomlyMark("auth-brand-mark") + "<span>Procomly</span></div>" +
       '<p class="sub">Tu cuenta fue desactivada por un administrador de Procomly.</p>' +
       '<p class="hint">Ya no tienes acceso a los procesos ni a ninguna acción dentro de la aplicación. Si crees que es un error, contacta al administrador para que reactive tu cuenta.</p>' +
       '<button type="button" class="btn ghost" id="deactivated-signout" style="margin-top:12px;">Cerrar sesión</button>' +
@@ -716,7 +731,7 @@
     var mode = state.authMode;
     document.body.innerHTML =
       '<div class="auth-shell"><div class="auth-box">' +
-      '<div class="auth-brand"><img class="auth-brand-mark" src="assets/procomly-mark.svg" alt="" /><span>Procomly</span></div>' +
+      '<div class="auth-brand">' + procomlyMark("auth-brand-mark") + "<span>Procomly</span></div>" +
       '<p class="sub">Proceso de Compras y Licitaciones Automatizado — ETED · Gerencia de Compras.</p>' +
       '<div class="auth-tabs">' +
       '<button type="button" class="auth-tab' + (mode === "signin" ? " active" : "") + '" data-mode="signin">Iniciar sesión</button>' +
@@ -802,10 +817,10 @@
     document.body.innerHTML =
       '<div class="app-shell">' +
       '<aside class="sidebar" id="sidebar">' +
-      '<div class="sidebar-brand"><img class="sidebar-brand-mark" src="assets/procomly-mark-white.svg" alt="" /><span>Procomly</span></div>' +
+      '<div class="sidebar-brand">' + procomlyMarkWhite("sidebar-brand-mark") + "<span>Procomly</span></div>" +
       '<nav class="sidebar-nav" id="sidebar-nav"></nav>' +
       '<div class="sidebar-foot">' +
-      '<img class="sidebar-foot-mark" src="assets/procomly-mark-white.svg" alt="Procomly" />' +
+      procomlyMarkWhite("sidebar-foot-mark") +
       '<div class="sidebar-foot-text"><span class="sidebar-foot-brand">Procomly</span><span class="sidebar-foot-org">Gerencia de Compras · <b>ETED</b></span></div>' +
       "</div>" +
       "</aside>" +
